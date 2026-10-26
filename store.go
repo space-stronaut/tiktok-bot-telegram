@@ -518,7 +518,7 @@ func (s *Store) reserveOnce(ctx context.Context, orderID, idemKey string, chatID
 	res, err := tx.ExecContext(ctx, `UPDATE accounts
 		SET status = 'reserved', order_id = ?, sold_to = ?, reserved_at = NOW()
 		WHERE account_date = ? AND status = 'available'
-		ORDER BY id LIMIT ?`, orderID, chatID, date, qty)
+		ORDER BY object_key LIMIT ?`, orderID, chatID, date, qty)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -659,7 +659,7 @@ func (s *Store) ListPendingInvoices(ctx context.Context) ([]Order, error) {
 
 func (s *Store) OrderAccounts(ctx context.Context, orderID string) ([]Account, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, object_key, json_key, account_name, batch_prefix, size_bytes
-		FROM accounts WHERE order_id = ? AND status IN ('reserved', 'sold') ORDER BY id`, orderID)
+		FROM accounts WHERE order_id = ? AND status IN ('reserved', 'sold') ORDER BY object_key`, orderID)
 	if err != nil {
 		return nil, err
 	}
