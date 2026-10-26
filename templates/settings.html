@@ -74,6 +74,12 @@
           {{if .Settings.HomeBannerURL}}
           <img src="{{.Settings.HomeBannerURL}}" alt="Preview banner" class="img-fluid rounded border mt-2" style="max-height:180px">
           {{end}}
+          <div class="mt-3">
+            <label class="form-label small fw-semibold" for="admin_contact_url">Tombol Hubungi Admin</label>
+            <input class="form-control mono" id="admin_contact_url" name="admin_contact_url" type="text"
+                   value="{{.Settings.AdminContactURL}}" placeholder="tg://user?id=123456789">
+            <div class="form-text">Format <code>tg://user?id=CHAT_ID</code> atau <code>https://t.me/username</code>. Kosongkan untuk menyembunyikan tombol. Catatan: tombol tg://user hanya aktif setelah user tersebut pernah chat bot.</div>
+          </div>
         </div>
       </div>
 

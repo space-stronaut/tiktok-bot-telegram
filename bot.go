@@ -228,7 +228,7 @@ func (a *App) showHome(chatID int64, msgID int) int {
 			tgbotapi.NewInlineKeyboardButtonData("🔎 Cek Status", "statusmenu"),
 			tgbotapi.NewInlineKeyboardButtonData("❓ Bantuan", "help"),
 		),
-		tgbotapi.NewInlineKeyboardRow(adminContactButton()),
+		a.adminContactRows(),
 	)
 	id, photo := a.showHomeMessage(chatID, msgID, render("✨"), &kb)
 	if id != 0 {
@@ -309,7 +309,7 @@ func (a *App) showHelp(chatID int64, msgID int) int {
 			tgbotapi.NewInlineKeyboardButtonData("🛍️ Beli Akun", "shop"),
 			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
 		),
-		tgbotapi.NewInlineKeyboardRow(adminContactButton()),
+		a.adminContactRows(),
 	)
 	return a.show(chatID, msgID, a.message("msg_help", map[string]any{
 		"Price": rupiah(a.cfg.PricePerAccount),
@@ -724,11 +724,11 @@ func (a *App) showReviewWindow(chatID int64, msgID int, o *Order) int {
 		"Qty":     o.Quantity,
 		"Total":   rupiah(o.GatewayTotal),
 	})
-	kb := reviewKeyboard(o.ID)
+	kb := a.reviewKeyboard(o.ID)
 	return a.show(chatID, msgID, text, &kb)
 }
 
-func reviewKeyboard(orderID string) tgbotapi.InlineKeyboardMarkup {
+func (a *App) reviewKeyboard(orderID string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Cek Status", "paycheck:"+orderID),
@@ -736,7 +736,7 @@ func reviewKeyboard(orderID string) tgbotapi.InlineKeyboardMarkup {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
 		),
-		tgbotapi.NewInlineKeyboardRow(adminContactButton()),
+		a.adminContactRows(),
 	)
 }
 
@@ -822,7 +822,7 @@ func (a *App) qrisMessage(o *Order, existed bool) (string, *tgbotapi.InlineKeybo
 		"Total":   rupiah(total),
 		"Expires": expires,
 	})
-	kb := qrisKeyboard(o.ID)
+	kb := a.qrisKeyboard(o.ID)
 	return text, &kb
 }
 
@@ -844,13 +844,17 @@ func (a *App) showQRISWindow(chatID int64, msgID int, o *Order, existed bool) in
 	return id
 }
 
-const adminContactURL = "tg://user?id=8690744587"
-
-func adminContactButton() tgbotapi.InlineKeyboardButton {
-	return tgbotapi.NewInlineKeyboardButtonURL("💬 Hubungi Admin", adminContactURL)
+// adminContactRows mengembalikan baris tombol kontak admin, atau nil jika
+// URL kontak belum diatur (mis. bot client yang belum punya ID admin).
+func (a *App) adminContactRows() []tgbotapi.InlineKeyboardButton {
+	url := strings.TrimSpace(a.cfg.AdminContactURL)
+	if url == "" {
+		return nil
+	}
+	return tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonURL("💬 Hubungi Admin", url))
 }
 
-func qrisKeyboard(orderID string) tgbotapi.InlineKeyboardMarkup {
+func (a *App) qrisKeyboard(orderID string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Cek Status", "paycheck:"+orderID),
@@ -860,7 +864,7 @@ func qrisKeyboard(orderID string) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData("❌ Batalkan", "cancel:"+orderID),
 			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
 		),
-		tgbotapi.NewInlineKeyboardRow(adminContactButton()),
+		a.adminContactRows(),
 	)
 }
 
@@ -903,7 +907,7 @@ func (a *App) checkPayment(chatID int64, msgID int, orderID string) {
 	if err != nil {
 		log.Printf("status invoice %s: %v", o.InvoiceID, err)
 		a.setUIOrder(chatID, o.ID)
-		kb := qrisKeyboard(o.ID)
+		kb := a.qrisKeyboard(o.ID)
 		a.show(chatID, msgID, "⚠️ Gagal mengecek status ke gateway. Coba lagi sebentar.\n\n"+orderCard(o, a.loc), &kb)
 		return
 	}
@@ -966,7 +970,7 @@ func (a *App) onDeliver(chatID int64, msgID int, orderID string) {
 	inv, err := a.pay.InvoiceStatus(ctx, o.InvoiceID)
 	if err != nil {
 		a.setUIOrder(chatID, o.ID)
-		kb := qrisKeyboard(o.ID)
+		kb := a.qrisKeyboard(o.ID)
 		a.show(chatID, msgID, "⚠️ Gagal mengecek pembayaran. Coba lagi.\n\n"+orderCard(o, a.loc), &kb)
 		return
 	}
@@ -979,7 +983,7 @@ func (a *App) onDeliver(chatID int64, msgID int, orderID string) {
 		a.showReviewWindow(chatID, msgID, o)
 	default:
 		a.setUIOrder(chatID, o.ID)
-		kb := qrisKeyboard(o.ID)
+		kb := a.qrisKeyboard(o.ID)
 		a.show(chatID, msgID, "⏳ Pembayaran belum diterima. Selesaikan pembayaran QRIS terlebih dahulu.\n\n"+orderCard(o, a.loc), &kb)
 	}
 }
@@ -1048,7 +1052,7 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		if st != "paid" {
 			if msgID != 0 {
 				a.setUIOrder(chatID, o.ID)
-				kb := qrisKeyboard(o.ID)
+				kb := a.qrisKeyboard(o.ID)
 				a.show(chatID, msgID, "⏳ Pembayaran belum diterima. File belum bisa dikirim.", &kb)
 			}
 			return
@@ -1565,7 +1569,7 @@ func (a *App) showCancelResult(chatID int64, msgID int, orderID string) {
 		inv, err := a.pay.InvoiceStatus(ctx, o.InvoiceID)
 		if err != nil {
 			a.setUIOrder(chatID, o.ID)
-			kb := qrisKeyboard(o.ID)
+			kb := a.qrisKeyboard(o.ID)
 			a.show(chatID, msgID, "⚠️ Gagal mengecek status pembayaran. Pesanan belum dibatalkan, coba lagi.", &kb)
 			return
 		}

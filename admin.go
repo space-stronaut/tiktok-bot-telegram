@@ -85,6 +85,7 @@ type settingsView struct {
 	BotName         string
 	HomeBannerURL   string
 	BannerUpload    bool
+	AdminContactURL string
 }
 
 type loginLimiter struct {
@@ -906,6 +907,7 @@ func (s *AdminServer) handleSettingsGet(w http.ResponseWriter, r *http.Request) 
 			BotName:         s.botName(),
 			HomeBannerURL:   cfg.HomeBannerURL,
 			BannerUpload:    s.bannerEnabled(),
+			AdminContactURL: cfg.AdminContactURL,
 		},
 	})
 }
@@ -920,6 +922,7 @@ func (s *AdminServer) handleSettingsPost(w http.ResponseWriter, r *http.Request)
 	maxAccounts := atoiDefault(r.PostFormValue("max_accounts"), 0)
 	maxZipMB := atoi64Default(r.PostFormValue("max_zip_mb"), 0)
 	homeBanner := strings.TrimSpace(r.PostFormValue("home_banner_url"))
+	adminContact := strings.TrimSpace(r.PostFormValue("admin_contact_url"))
 
 	uploaded := false
 	urlBanner, uerr := s.storeBannerUpload(r)
@@ -954,6 +957,19 @@ func (s *AdminServer) handleSettingsPost(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	if adminContact != "" {
+		okPrefix := strings.HasPrefix(adminContact, "tg://user?id=") ||
+			strings.HasPrefix(adminContact, "https://t.me/") ||
+			strings.HasPrefix(adminContact, "http://t.me/")
+		if !okPrefix {
+			redirectFlash(w, r, "/settings", "err", "URL kontak admin harus tg://user?id=... atau https://t.me/...")
+			return
+		}
+		if len(adminContact) > 200 {
+			redirectFlash(w, r, "/settings", "err", "URL kontak admin terlalu panjang.")
+			return
+		}
+	}
 
 	if token != "" && token != s.app.cfg.BotToken {
 		if err := s.app.reconnectBot(token); err != nil {
@@ -963,11 +979,12 @@ func (s *AdminServer) handleSettingsPost(w http.ResponseWriter, r *http.Request)
 	}
 
 	values := map[string]string{
-		settingsKeyAdminIDs:    adminIDs,
-		settingsKeyPrice:       strconv.FormatInt(price, 10),
-		settingsKeyMaxAccounts: strconv.Itoa(maxAccounts),
-		settingsKeyMaxZipBytes: strconv.FormatInt(maxZipMB*1000000, 10),
-		settingsKeyHomeBanner:  homeBanner,
+		settingsKeyAdminIDs:     adminIDs,
+		settingsKeyPrice:        strconv.FormatInt(price, 10),
+		settingsKeyMaxAccounts:  strconv.Itoa(maxAccounts),
+		settingsKeyMaxZipBytes:  strconv.FormatInt(maxZipMB*1000000, 10),
+		settingsKeyHomeBanner:   homeBanner,
+		settingsKeyAdminContact: adminContact,
 	}
 	if token != "" {
 		values[settingsKeyBotToken] = token
