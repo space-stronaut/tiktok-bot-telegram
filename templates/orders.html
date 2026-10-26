@@ -1,0 +1,109 @@
+{{define "content"}}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Pesanan</h1>
+    <p class="text-secondary mb-0 small">{{.Total}} pesanan ditemukan.</p>
+  </div>
+  <a href="/orders/new" class="btn btn-success"><i class="bi bi-plus-lg me-1"></i>Order Manual</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" action="/orders" class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small fw-semibold">Cari</label>
+        <input class="form-control" name="q" value="{{.Query}}" placeholder="Order ID, username, atau chat ID">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">Status order</label>
+        <select class="form-select" name="status">
+          <option value="">Semua</option>
+          <option value="pending" {{if eq .StatusFilter "pending"}}selected{{end}}>Menunggu bayar</option>
+          <option value="paid" {{if eq .StatusFilter "paid"}}selected{{end}}>Lunas</option>
+          <option value="processing" {{if eq .StatusFilter "processing"}}selected{{end}}>Diproses</option>
+          <option value="sent" {{if eq .StatusFilter "sent"}}selected{{end}}>Terkirim</option>
+          <option value="cancelled" {{if eq .StatusFilter "cancelled"}}selected{{end}}>Dibatalkan</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small fw-semibold">Pembayaran</label>
+        <select class="form-select" name="invoice">
+          <option value="">Semua</option>
+          <option value="review" {{if eq .InvoiceFilter "review"}}selected{{end}}>Review</option>
+          <option value="paid" {{if eq .InvoiceFilter "paid"}}selected{{end}}>Lunas</option>
+          <option value="pending" {{if eq .InvoiceFilter "pending"}}selected{{end}}>Menunggu</option>
+          <option value="expired" {{if eq .InvoiceFilter "expired"}}selected{{end}}>Kedaluwarsa</option>
+        </select>
+      </div>
+      <div class="col-md-2 d-flex gap-2">
+        <button class="btn btn-primary w-100" type="submit"><i class="bi bi-funnel me-1"></i>Filter</button>
+        <a class="btn btn-outline-secondary" href="/orders" title="Reset"><i class="bi bi-x-lg"></i></a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Order</th>
+          <th>Pelanggan</th>
+          <th>Tanggal akun</th>
+          <th class="text-end">Qty</th>
+          <th class="text-end">Total bayar</th>
+          <th>Status</th>
+          <th>Pembayaran</th>
+          <th>Dibuat</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Orders}}
+        <tr>
+          <td class="mono">
+            {{.ID}}
+            {{if isManual .ID}}<span class="badge text-bg-dark ms-1">Manual</span>{{end}}
+          </td>
+          <td>
+            <div>{{if .Username}}@{{.Username}}{{else}}-{{end}}</div>
+            <div class="small text-secondary mono">{{.ChatID}}</div>
+          </td>
+          <td class="text-nowrap">{{date .Date}}</td>
+          <td class="text-end">{{.Quantity}}</td>
+          <td class="text-nowrap text-end">{{if isManual .ID}}{{rupiah .TotalPrice}}{{else}}{{rupiah .GatewayTotal}}{{end}}</td>
+          <td><span class="badge text-bg-{{statusClass .Status}}">{{statusText .Status}}</span></td>
+          <td><span class="badge text-bg-{{invoiceClass .InvoiceStatus}}">{{invoiceText .InvoiceStatus}}</span></td>
+          <td class="text-nowrap small">{{datetime .CreatedAt}}</td>
+          <td class="text-end text-nowrap">
+            {{if eq .Status "sent"}}
+            <a class="btn btn-sm btn-success" href="/orders/{{.ID}}/download" title="Download ZIP"><i class="bi bi-download"></i></a>
+            {{end}}
+            <a class="btn btn-sm btn-outline-primary" href="/orders/{{.ID}}">Detail</a>
+          </td>
+        </tr>
+      {{else}}
+        <tr><td colspan="9" class="text-center text-secondary py-5">Tidak ada pesanan yang cocok.</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span class="small text-secondary">Halaman {{.Page}} dari {{.TotalPages}}</span>
+    <div class="btn-group">
+      {{if le .Page 1}}
+        <button class="btn btn-outline-secondary btn-sm" disabled><i class="bi bi-chevron-left"></i> Sebelumnya</button>
+      {{else}}
+        <a class="btn btn-outline-secondary btn-sm" href="{{.PrevURL}}"><i class="bi bi-chevron-left"></i> Sebelumnya</a>
+      {{end}}
+      {{if ge .Page .TotalPages}}
+        <button class="btn btn-outline-secondary btn-sm" disabled>Berikutnya <i class="bi bi-chevron-right"></i></button>
+      {{else}}
+        <a class="btn btn-outline-secondary btn-sm" href="{{.NextURL}}">Berikutnya <i class="bi bi-chevron-right"></i></a>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+

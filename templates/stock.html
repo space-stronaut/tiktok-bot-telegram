@@ -1,0 +1,71 @@
+{{define "content"}}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Stok Akun</h1>
+    <p class="text-secondary mb-0 small">Total {{.Stats.TotalAccounts}} akun: {{.Stats.Available}} tersedia, {{.Stats.Reserved}} tereservasi, {{.Stats.Sold}} terjual.</p>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card shadow-sm"><div class="card-body">
+      <div class="text-secondary small">Tersedia</div>
+      <div class="metric text-success">{{.Stats.Available}}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card shadow-sm"><div class="card-body">
+      <div class="text-secondary small">Tereservasi</div>
+      <div class="metric text-warning-emphasis">{{.Stats.Reserved}}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card shadow-sm"><div class="card-body">
+      <div class="text-secondary small">Terjual</div>
+      <div class="metric text-primary">{{.Stats.Sold}}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card shadow-sm"><div class="card-body">
+      <div class="text-secondary small">Total</div>
+      <div class="metric">{{.Stats.TotalAccounts}}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Tanggal akun</th>
+          <th class="text-end">Tersedia</th>
+          <th class="text-end">Tereservasi</th>
+          <th class="text-end">Terjual</th>
+          <th class="text-end">Total</th>
+          <th>Pemanfaatan</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Stock}}
+        <tr>
+          <td class="fw-semibold text-nowrap">{{date .Date}}</td>
+          <td class="text-end {{if eq .Available 0}}text-danger fw-semibold{{end}}">{{.Available}}</td>
+          <td class="text-end">{{.Reserved}}</td>
+          <td class="text-end">{{.Sold}}</td>
+          <td class="text-end text-secondary">{{.Total}}</td>
+          <td style="min-width: 160px;">
+            <div class="progress" style="height: 8px;">
+              <div class="progress-bar bg-primary" role="progressbar" style="width: {{if .Total}}{{divpct .Sold .Total}}{{else}}0{{end}}%"></div>
+              <div class="progress-bar bg-warning" role="progressbar" style="width: {{if .Total}}{{divpct .Reserved .Total}}{{else}}0{{end}}%"></div>
+            </div>
+          </td>
+        </tr>
+      {{else}}
+        <tr><td colspan="6" class="text-center text-secondary py-5">Belum ada stok akun.</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

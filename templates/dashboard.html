@@ -1,0 +1,111 @@
+{{define "content"}}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Dashboard</h1>
+    <p class="text-secondary mb-0 small">Ringkasan bot dan pesanan terbaru.</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="/orders/new" class="btn btn-success btn-sm"><i class="bi bi-plus-lg me-1"></i>Order Manual</a>
+    <a href="/orders?status=pending&amp;invoice=review" class="btn btn-danger btn-sm">
+      <i class="bi bi-exclamation-triangle me-1"></i>Review: {{.Stats.Review}}
+    </a>
+    <a href="/orders" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul me-1"></i>Semua Pesanan</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-xl">
+    <div class="card h-100 shadow-sm"><div class="card-body">
+      <div class="text-secondary small">Total pesanan</div>
+      <div class="metric">{{.Stats.TotalOrders}}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-xl">
+    <div class="card h-100 shadow-sm border-warning-subtle"><div class="card-body">
+      <div class="text-secondary small">Menunggu bayar</div>
+      <div class="metric text-warning-emphasis">{{.Stats.Pending}}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-xl">
+    <div class="card h-100 shadow-sm border-danger-subtle"><div class="card-body">
+      <div class="text-secondary small">Review Nexus</div>
+      <div class="metric text-danger">{{.Stats.Review}}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-xl">
+    <div class="card h-100 shadow-sm border-success-subtle"><div class="card-body">
+      <div class="text-secondary small">Terkirim</div>
+      <div class="metric text-success">{{.Stats.Sent}}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-xl">
+    <div class="card h-100 shadow-sm"><div class="card-body">
+      <div class="text-secondary small">Stok tersedia</div>
+      <div class="metric">{{.Stats.Available}}</div>
+      <div class="small text-secondary">dari {{.Stats.TotalAccounts}} akun</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="bi bi-receipt me-1"></i>Pesanan terbaru</span>
+        <a href="/orders" class="small text-decoration-none">Lihat semua</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover table-tight align-middle mb-0">
+          <thead class="table-light">
+            <tr><th>Order</th><th>Pelanggan</th><th>Total</th><th>Status</th><th>Bayar</th></tr>
+          </thead>
+          <tbody>
+          {{range .Orders}}
+            <tr>
+              <td class="mono"><a href="/orders/{{.ID}}" class="text-decoration-none">{{.ID}}</a></td>
+              <td>
+                <div>{{if .Username}}@{{.Username}}{{else}}-{{end}}</div>
+                <div class="small text-secondary mono">{{.ChatID}}</div>
+              </td>
+              <td class="text-nowrap">{{if isManual .ID}}{{rupiah .TotalPrice}}{{else}}{{rupiah .GatewayTotal}}{{end}}</td>
+              <td><span class="badge text-bg-{{statusClass .Status}}">{{statusText .Status}}</span></td>
+              <td><span class="badge text-bg-{{invoiceClass .InvoiceStatus}}">{{invoiceText .InvoiceStatus}}</span></td>
+            </tr>
+          {{else}}
+            <tr><td colspan="5" class="text-center text-secondary py-4">Belum ada pesanan.</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="bi bi-box-seam me-1"></i>Stok per tanggal</span>
+        <a href="/stock" class="small text-decoration-none">Detail</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover table-tight align-middle mb-0">
+          <thead class="table-light">
+            <tr><th>Tanggal</th><th class="text-end">Tersedia</th><th class="text-end">Total</th></tr>
+          </thead>
+          <tbody>
+          {{range .Stock}}
+            <tr>
+              <td>{{date .Date}}</td>
+              <td class="text-end fw-semibold {{if eq .Available 0}}text-danger{{end}}">{{.Available}}</td>
+              <td class="text-end text-secondary">{{.Total}}</td>
+            </tr>
+          {{else}}
+            <tr><td colspan="3" class="text-center text-secondary py-4">Belum ada stok.</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}
+

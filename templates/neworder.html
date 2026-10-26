@@ -1,0 +1,78 @@
+{{define "content"}}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <div class="small text-secondary"><a href="/orders" class="text-decoration-none"><i class="bi bi-arrow-left me-1"></i>Kembali ke pesanan</a></div>
+    <h1 class="h3 mb-0 mt-1">Order Manual</h1>
+    <p class="text-secondary mb-0 small">Buat order dari stok tanpa bot dan tanpa payment gateway. File diunduh langsung dari dashboard.</p>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-7">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-cart-plus me-1"></i>Buat pesanan</div>
+      <div class="card-body">
+        <form method="post" action="/orders/new" data-confirm="Buat order manual dan potong stok sekarang?">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold" for="account_date">Tanggal akun</label>
+              <select class="form-select" id="account_date" name="account_date" required>
+                <option value="">Pilih tanggal</option>
+                {{range .Stock}}
+                  {{if gt .Available 0}}
+                  <option value="{{.Date.Format "2006-01-02"}}">{{date .Date}} — tersedia {{.Available}}</option>
+                  {{end}}
+                {{end}}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-semibold" for="quantity">Jumlah akun</label>
+              <input class="form-control" id="quantity" name="quantity" type="number" min="1" max="{{.MaxAccounts}}" value="1" required>
+              <div class="form-text">Maks. {{.MaxAccounts}}</div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-semibold" for="price_per_account">Harga / akun</label>
+              <div class="input-group">
+                <span class="input-group-text">Rp</span>
+                <input class="form-control" id="price_per_account" name="price_per_account" type="number" min="0" step="1" value="{{.DefaultPrice}}">
+              </div>
+              <div class="form-text">Isi 0 untuk gratis.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold" for="username">Username pembeli (opsional)</label>
+              <div class="input-group">
+                <span class="input-group-text">@</span>
+                <input class="form-control" id="username" name="username" maxlength="64" placeholder="username">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold" for="chat_id">Chat ID Telegram (opsional)</label>
+              <input class="form-control mono" id="chat_id" name="chat_id" placeholder="mis. 123456789">
+              <div class="form-text">Hanya untuk catatan; file tidak dikirim ke Telegram.</div>
+            </div>
+          </div>
+          <hr class="my-4">
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-check2-circle me-1"></i>Buat Order Manual
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-info-circle me-1"></i>Alur</div>
+      <div class="card-body small text-secondary">
+        <ol class="mb-0 ps-3">
+          <li class="mb-2">Order dibuat, stok langsung dipotong dan ditandai lunas/terkirim.</li>
+          <li class="mb-2">Halaman detail order terbuka otomatis.</li>
+          <li class="mb-2">Klik <b>Download ZIP</b> untuk mengambil file akun.</li>
+          <li>File bisa diunduh ulang kapan saja dari detail order.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}
