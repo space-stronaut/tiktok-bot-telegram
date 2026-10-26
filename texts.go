@@ -32,7 +32,6 @@ var textDefs = []textDef{
 		Placeholders: "{{.Star}} {{.Stock}} {{.Price}} {{.BotName}}",
 		Default: `{{.Star}} <b>Menu Utama</b>
 
-Stok tersedia: <b>{{.Stock}} akun</b>
 Harga: <b>{{.Price}}/akun</b>
 
 Silakan pilih menu:`,
@@ -59,7 +58,6 @@ Pilih tanggal akun:`,
 		Description:  "Teks saat pelanggan memilih salah satu tanggal akun.",
 		Placeholders: "{{.Date}} {{.Stock}} {{.Price}}",
 		Default: `📅 <b>{{.Date}}</b>
-Stok tersedia: <b>{{.Stock}} akun</b>
 Harga: <b>{{.Price}}/akun</b>
 
 Pilih jumlah akun:`,
@@ -71,7 +69,6 @@ Pilih jumlah akun:`,
 		Placeholders: "{{.Date}} {{.Stock}} {{.Max}}",
 		Default: `✏️ <b>Custom jumlah</b>
 Tanggal: <b>{{.Date}}</b>
-Stok: {{.Stock}} akun
 
 Ketik jumlah akun (1–{{.Max}}):`,
 	},

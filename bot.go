@@ -348,7 +348,7 @@ func (a *App) showShop(chatID int64, msgID int) int {
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, d := range dates {
-		label := fmt.Sprintf("📅 %s (%d Hari) • %d akun", formatDateFullID(d.Date), accountAgeDays(d.Date, a.loc), d.Count)
+		label := fmt.Sprintf("📅 %s (%d Hari)", formatDateFullID(d.Date), accountAgeDays(d.Date, a.loc))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, "date:"+d.Date.Format("2006-01-02")),
 		))
