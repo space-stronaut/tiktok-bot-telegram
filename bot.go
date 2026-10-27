@@ -1198,32 +1198,67 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		orderID, o.InvoiceID, html.EscapeString(username), chatID, formatDateID(o.Date), len(accounts), rupiah(o.GatewayTotal), float64(o.AmountBytes)/1e6))
 }
 
-// planParts membagi akun menjadi beberapa kelompok berdasarkan kumulatif
-// ukuran file, agar tiap ZIP berada di bawah batas upload Telegram.
+// planParts membagi akun menjadi beberapa bagian dengan jumlah akun yang
+// rata — hanya bagian terakhir yang boleh berbeda — sambil memastikan
+// tiap bagian tetap di bawah batas ukuran upload Telegram.
 func planParts(accounts []Account, limit int64) [][]Account {
-	var parts [][]Account
-	var cur []Account
-	var size int64
+	if len(accounts) == 0 {
+		return nil
+	}
+	var total int64
 	for _, acc := range accounts {
 		sz := acc.Size
 		if sz <= 0 {
 			sz = 1
 		}
-		if len(cur) > 0 && size+sz > limit {
-			parts = append(parts, cur)
-			cur = nil
-			size = 0
+		total += sz
+	}
+	n := int((total + limit - 1) / limit)
+	if n < 1 {
+		n = 1
+	}
+	if n > len(accounts) {
+		n = len(accounts)
+	}
+	for {
+		parts := splitEven(accounts, n)
+		if partsFit(parts, limit) || n >= len(accounts) {
+			return parts
 		}
-		cur = append(cur, acc)
-		size += sz
+		n++
 	}
-	if len(cur) > 0 {
-		parts = append(parts, cur)
-	}
-	if len(parts) == 0 {
-		parts = [][]Account{accounts}
+}
+
+// splitEven memotong akun menjadi n bagian berurutan berukuran sama;
+// sisa pembagian jatuh ke bagian terakhir (mis. 30 -> 10,10,10).
+func splitEven(accounts []Account, n int) [][]Account {
+	per := (len(accounts) + n - 1) / n
+	var parts [][]Account
+	for start := 0; start < len(accounts); start += per {
+		end := start + per
+		if end > len(accounts) {
+			end = len(accounts)
+		}
+		parts = append(parts, accounts[start:end])
 	}
 	return parts
+}
+
+func partsFit(parts [][]Account, limit int64) bool {
+	for _, p := range parts {
+		var s int64
+		for _, acc := range p {
+			sz := acc.Size
+			if sz <= 0 {
+				sz = 1
+			}
+			s += sz
+		}
+		if s > limit {
+			return false
+		}
+	}
+	return true
 }
 
 func buyerFilePrefix(o *Order) string {
