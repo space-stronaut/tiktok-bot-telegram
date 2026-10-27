@@ -1096,34 +1096,47 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 	}
 	defer os.RemoveAll(dir)
 
-	zipPath := filepath.Join(dir, fmt.Sprintf("%s-%s-%dakun.zip", buyerFilePrefix(o), o.Date.Format("2006-01-02"), len(accounts)))
-	if err := a.buildZip(ctx, accounts, zipPath); err != nil {
-		_ = a.store.RevertDelivery(ctx, orderID)
-		log.Printf("zip %s: %v", orderID, err)
-		a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi ZIP gagal dibuat</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nError: %s",
-			orderID, chatID, html.EscapeString(err.Error())))
-		a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal menyiapkan file akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
-		return
-	}
+	// Telegram membatasi upload bot sekitar 50MB per dokumen; pecah
+	// pesanan besar menjadi beberapa ZIP agar tetap bisa terkirim semua.
+	const partLimit = 40 << 20 // 40 MB per bagian
+	parts := planParts(accounts, partLimit)
+	for i, part := range parts {
+		name := fmt.Sprintf("%s-%s-%dakun", buyerFilePrefix(o), o.Date.Format("2006-01-02"), len(accounts))
+		if len(parts) > 1 {
+			name = fmt.Sprintf("%s-bagian%d-dari-%d", name, i+1, len(parts))
+		}
+		zipPath := filepath.Join(dir, name+".zip")
+		if err := a.buildZip(ctx, part, zipPath); err != nil {
+			_ = a.store.RevertDelivery(ctx, orderID)
+			log.Printf("zip %s (bagian %d): %v", orderID, i+1, err)
+			a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi ZIP gagal dibuat</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nError: %s",
+				orderID, chatID, html.EscapeString(err.Error())))
+			a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal menyiapkan file akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
+			return
+		}
 
-	doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(zipPath))
-	doc.Caption = a.message("msg_delivery", map[string]any{
-		"OrderID": orderID,
-		"Date":    formatDateID(o.Date),
-		"Qty":     len(accounts),
-		"Total":   rupiah(o.GatewayTotal),
-	})
-	doc.ParseMode = tgbotapi.ModeHTML
-	kb := orderKeyboard(orderID)
-	doc.ReplyMarkup = kb
+		caption := a.message("msg_delivery", map[string]any{
+			"OrderID": orderID,
+			"Date":    formatDateID(o.Date),
+			"Qty":     len(accounts),
+			"Total":   rupiah(o.GatewayTotal),
+		})
+		if len(parts) > 1 {
+			caption += fmt.Sprintf("\n\n📦 Bagian <b>%d / %d</b> — %d akun", i+1, len(parts), len(part))
+		}
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(zipPath))
+		doc.Caption = caption
+		doc.ParseMode = tgbotapi.ModeHTML
+		doc.ReplyMarkup = orderKeyboard(orderID)
 
-	if _, err := a.api.Send(doc); err != nil {
-		_ = a.store.RevertDelivery(ctx, orderID)
-		log.Printf("kirim dokumen %s: %v", orderID, err)
-		a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi kirim file gagal</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nError: %s",
-			orderID, chatID, html.EscapeString(err.Error())))
-		a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal mengirim file. Pembayaran tetap tercatat dan stok tidak dilepas; klik Ambil File untuk coba lagi.")
-		return
+		if _, err := a.api.Send(doc); err != nil {
+			_ = a.store.RevertDelivery(ctx, orderID)
+			log.Printf("kirim dokumen %s (bagian %d/%d): %v", orderID, i+1, len(parts), err)
+			a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi kirim file gagal</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nBagian: %d/%d\nError: %s",
+				orderID, chatID, i+1, len(parts), html.EscapeString(err.Error())))
+			a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal mengirim file. Pembayaran tetap tercatat dan stok tidak dilepas; klik Ambil File untuk coba lagi.")
+			return
+		}
 	}
 
 	finalized := false
@@ -1165,6 +1178,34 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 	}
 	a.notifyAdmins(fmt.Sprintf("🛒 <b>Order lunas & terkirim</b>\nOrder: <code>%s</code>\nInvoice: <code>%s</code>\nUser: %s (<code>%d</code>)\nTanggal: %s\nJumlah: %d akun\nTotal bayar: %s\nUkuran: %.1f MB",
 		orderID, o.InvoiceID, html.EscapeString(username), chatID, formatDateID(o.Date), len(accounts), rupiah(o.GatewayTotal), float64(o.AmountBytes)/1e6))
+}
+
+// planParts membagi akun menjadi beberapa kelompok berdasarkan kumulatif
+// ukuran file, agar tiap ZIP berada di bawah batas upload Telegram.
+func planParts(accounts []Account, limit int64) [][]Account {
+	var parts [][]Account
+	var cur []Account
+	var size int64
+	for _, acc := range accounts {
+		sz := acc.Size
+		if sz <= 0 {
+			sz = 1
+		}
+		if len(cur) > 0 && size+sz > limit {
+			parts = append(parts, cur)
+			cur = nil
+			size = 0
+		}
+		cur = append(cur, acc)
+		size += sz
+	}
+	if len(cur) > 0 {
+		parts = append(parts, cur)
+	}
+	if len(parts) == 0 {
+		parts = [][]Account{accounts}
+	}
+	return parts
 }
 
 func buyerFilePrefix(o *Order) string {
