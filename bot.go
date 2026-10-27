@@ -387,22 +387,24 @@ func (a *App) onDate(chatID int64, msgID int, date string) {
 		max = a.cfg.MaxAccounts
 	}
 
-	presets := []int{1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
+	presets := []int{10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
 	var rows [][]tgbotapi.InlineKeyboardButton
-	var row []tgbotapi.InlineKeyboardButton
-	for _, p := range presets {
-		if p > max {
-			continue
+	if count > 10 {
+		var row []tgbotapi.InlineKeyboardButton
+		for _, p := range presets {
+			if p > max {
+				continue
+			}
+			row = append(row, tgbotapi.NewInlineKeyboardButtonData(
+				strconv.Itoa(p), fmt.Sprintf("qty:%s:%d", date, p)))
+			if len(row) == 5 {
+				rows = append(rows, row)
+				row = nil
+			}
 		}
-		row = append(row, tgbotapi.NewInlineKeyboardButtonData(
-			strconv.Itoa(p), fmt.Sprintf("qty:%s:%d", date, p)))
-		if len(row) == 5 {
+		if len(row) > 0 {
 			rows = append(rows, row)
-			row = nil
 		}
-	}
-	if len(row) > 0 {
-		rows = append(rows, row)
 	}
 	rows = append(rows,
 		tgbotapi.NewInlineKeyboardRow(
@@ -421,7 +423,7 @@ func (a *App) onDate(chatID int64, msgID int, date string) {
 	a.show(chatID, msgID, text, &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows})
 }
 
-func (a *App) onCustom(chatID int64, msgID int, date string) {
+func (a *App) onCustom(chatID int64, msgID int, date, notice string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	a.clearUIOrder(chatID)
@@ -446,6 +448,13 @@ func (a *App) onCustom(chatID int64, msgID int, date string) {
 		"Stock": count,
 		"Max":   max,
 	})
+	text += "\n\n⚠️ Minimal pesanan <b>10 akun</b>."
+	if max < 10 {
+		text += fmt.Sprintf("\n❌ Stok tanggal ini hanya %d — kurang dari minimal.", max)
+	}
+	if notice != "" {
+		text += "\n" + notice
+	}
 	kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "home"),
 	))
@@ -469,6 +478,10 @@ func (a *App) handleText(msg *tgbotapi.Message) {
 			tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "home"),
 		))
 		a.show(chatID, msgID, "❌ Jumlah tidak valid. Ketik angka, contoh: 7", &kb)
+		return
+	}
+	if qty < 10 {
+		a.onCustom(chatID, msgID, s.date, "❌ Minimal pesanan <b>10 akun</b> — ketik jumlah yang lebih besar.")
 		return
 	}
 
@@ -548,7 +561,7 @@ func (a *App) handleCallback(cq *tgbotapi.CallbackQuery) {
 	case strings.HasPrefix(data, "date:"):
 		a.onDate(chatID, msgID, strings.TrimPrefix(data, "date:"))
 	case strings.HasPrefix(data, "custom:"):
-		a.onCustom(chatID, msgID, strings.TrimPrefix(data, "custom:"))
+		a.onCustom(chatID, msgID, strings.TrimPrefix(data, "custom:"), "")
 	case strings.HasPrefix(data, "qty:"):
 		parts := strings.SplitN(strings.TrimPrefix(data, "qty:"), ":", 2)
 		if len(parts) != 2 {
