@@ -1129,8 +1129,7 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 
 	// Telegram membatasi upload bot sekitar 50MB per dokumen; pecah
 	// pesanan besar menjadi beberapa ZIP agar tetap bisa terkirim semua.
-	const partLimit = 40 << 20 // 40 MB per bagian
-	parts := planParts(accounts, partLimit)
+	parts := planParts(accounts)
 	for i, part := range parts {
 		name := fmt.Sprintf("%s-%s-%dakun", buyerFilePrefix(o), o.Date.Format("2006-01-02"), len(accounts))
 		if len(parts) > 1 {
@@ -1211,67 +1210,19 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		orderID, o.InvoiceID, html.EscapeString(username), chatID, formatDateID(o.Date), len(accounts), rupiah(o.GatewayTotal), float64(o.AmountBytes)/1e6))
 }
 
-// planParts membagi akun menjadi beberapa bagian dengan jumlah akun yang
-// rata — hanya bagian terakhir yang boleh berbeda — sambil memastikan
-// tiap bagian tetap di bawah batas ukuran upload Telegram.
-func planParts(accounts []Account, limit int64) [][]Account {
-	if len(accounts) == 0 {
-		return nil
-	}
-	var total int64
-	for _, acc := range accounts {
-		sz := acc.Size
-		if sz <= 0 {
-			sz = 1
-		}
-		total += sz
-	}
-	n := int((total + limit - 1) / limit)
-	if n < 1 {
-		n = 1
-	}
-	if n > len(accounts) {
-		n = len(accounts)
-	}
-	for {
-		parts := splitEven(accounts, n)
-		if partsFit(parts, limit) || n >= len(accounts) {
-			return parts
-		}
-		n++
-	}
-}
-
-// splitEven memotong akun menjadi n bagian berurutan berukuran sama;
-// sisa pembagian jatuh ke bagian terakhir (mis. 30 -> 10,10,10).
-func splitEven(accounts []Account, n int) [][]Account {
-	per := (len(accounts) + n - 1) / n
+// planParts membagi akun menjadi beberapa bagian dengan aturan tetap
+// 10 akun per file; bagian terakhir berisi sisa (mis. 23 -> 10,10,3).
+func planParts(accounts []Account) [][]Account {
+	const accountsPerPart = 10
 	var parts [][]Account
-	for start := 0; start < len(accounts); start += per {
-		end := start + per
+	for start := 0; start < len(accounts); start += accountsPerPart {
+		end := start + accountsPerPart
 		if end > len(accounts) {
 			end = len(accounts)
 		}
 		parts = append(parts, accounts[start:end])
 	}
 	return parts
-}
-
-func partsFit(parts [][]Account, limit int64) bool {
-	for _, p := range parts {
-		var s int64
-		for _, acc := range p {
-			sz := acc.Size
-			if sz <= 0 {
-				sz = 1
-			}
-			s += sz
-		}
-		if s > limit {
-			return false
-		}
-	}
-	return true
 }
 
 func buyerFilePrefix(o *Order) string {
