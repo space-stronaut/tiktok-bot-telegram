@@ -1060,20 +1060,38 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		_ = a.store.SetInvoiceStatus(ctx, o.ID, "paid")
 	}
 
+	// Flash: pembayaran diterima, pesanan diproses. QRIS langsung dihapus
+	// supaya pelanggan tidak membayar invoice yang sudah lunas.
+	a.deleteQRIS(orderID)
+	flashKB := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
+		),
+	)
+	flashText := "✅ <b>Pembayaran diterima!</b>\n\n⏳ Pesanan sedang diproses — file akan dikirim otomatis di chat ini..."
+	flashMsgID := 0
+	if a.getUIOrder(chatID) == orderID && msgID == 0 {
+		msgID = a.getUI(chatID)
+	}
+	if msgID != 0 {
+		a.show(chatID, msgID, flashText, &flashKB)
+		flashMsgID = msgID
+	} else {
+		flashMsgID = a.show(chatID, 0, flashText, &flashKB)
+	}
+
 	ok, err := a.store.ClaimDelivery(ctx, orderID, chatID)
 	if err != nil {
 		log.Printf("claim delivery %s: %v", orderID, err)
-		if msgID != 0 {
-			a.showError(chatID, msgID, "❌ Gagal memproses pesanan.")
-		}
+		a.showError(chatID, flashMsgID, "❌ Gagal memproses pesanan.")
 		return
 	}
 	if !ok {
 		o2, getErr := a.store.GetOrder(ctx, orderID)
 		if getErr == nil && o2.Status == "sent" {
 			a.deleteQRIS(o2.ID)
-		} else if msgID != 0 {
-			a.showError(chatID, msgID, "⏳ Pesanan sedang diproses. Coba cek lagi sebentar.")
+		} else {
+			a.showError(chatID, flashMsgID, "⏳ Pesanan sedang diproses. Coba cek lagi sebentar.")
 		}
 		return
 	}
@@ -1084,7 +1102,7 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		log.Printf("akun order %s: %v", orderID, err)
 		a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi akun gagal dibaca</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nError: %s",
 			orderID, chatID, html.EscapeString(fmt.Sprint(err))))
-		a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal membaca daftar akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
+		a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal membaca daftar akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
 		return
 	}
 
@@ -1111,7 +1129,7 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 			log.Printf("zip %s (bagian %d): %v", orderID, i+1, err)
 			a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi ZIP gagal dibuat</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nError: %s",
 				orderID, chatID, html.EscapeString(err.Error())))
-			a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal menyiapkan file akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
+			a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal menyiapkan file akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
 			return
 		}
 
@@ -1134,7 +1152,7 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 			log.Printf("kirim dokumen %s (bagian %d/%d): %v", orderID, i+1, len(parts), err)
 			a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi kirim file gagal</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nBagian: %d/%d\nError: %s",
 				orderID, chatID, i+1, len(parts), html.EscapeString(err.Error())))
-			a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal mengirim file. Pembayaran tetap tercatat dan stok tidak dilepas; klik Ambil File untuk coba lagi.")
+			a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal mengirim file. Pembayaran tetap tercatat dan stok tidak dilepas; klik Ambil File untuk coba lagi.")
 			return
 		}
 		// bebaskan tmpfs segera; jangan tunggu semua bagian selesai
@@ -1157,20 +1175,18 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 	}
 	_ = a.store.SetInvoiceStatus(ctx, orderID, "paid")
 	a.deleteQRIS(orderID)
-	uiMatches := a.getUIOrder(chatID) == orderID
-	if uiMatches && msgID == 0 {
-		msgID = a.getUI(chatID)
+	// flash dihapus, diganti pesan selesai
+	if flashMsgID != 0 {
+		a.deleteMessage(chatID, flashMsgID)
 	}
 	a.clearUIOrder(chatID)
-	if uiMatches && msgID != 0 {
-		doneKB := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("📦 Pesanan Saya", "myorders"),
-				tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
-			),
-		)
-		a.show(chatID, msgID, fmt.Sprintf("✅ Pembayaran diterima. Order <code>%s</code> — %d akun terkirim.", orderID, len(accounts)), &doneKB)
-	}
+	doneKB := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📦 Pesanan Saya", "myorders"),
+			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
+		),
+	)
+	a.show(chatID, 0, fmt.Sprintf("✅ Pembayaran diterima. Order <code>%s</code> — %d akun terkirim.", orderID, len(accounts)), &doneKB)
 
 	username := o.Username
 	if username != "" {
