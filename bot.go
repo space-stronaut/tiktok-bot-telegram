@@ -1137,6 +1137,8 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 			a.showDeliveryError(chatID, msgID, orderID, "❌ Gagal mengirim file. Pembayaran tetap tercatat dan stok tidak dilepas; klik Ambil File untuk coba lagi.")
 			return
 		}
+		// bebaskan tmpfs segera; jangan tunggu semua bagian selesai
+		_ = os.Remove(zipPath)
 	}
 
 	finalized := false
