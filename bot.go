@@ -1007,8 +1007,11 @@ func (a *App) deliverPaid(ctx context.Context, chatID int64, msgID int, orderID 
 
 // deliverOrder mengirim file pesanan. Jika verify=true, status pembayaran
 // dicek ulang ke gateway; verify=false dipakai admin untuk bypass review.
+// Proses kirim berat memakai deadline sendiri (30 menit) dan TIDAK mewarisi
+// deadline parent — klik pembeli hanya punya 30 detik, jadi mewarisi itu
+// membuat pengiriman multi-bagian mati di tengah jalan.
 func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID string, verify bool) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	o, err := a.store.GetOrder(ctx, orderID)
@@ -1038,7 +1041,9 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 	}
 
 	if verify && o.InvoiceID != "" {
-		inv, err := a.pay.InvoiceStatus(ctx, o.InvoiceID)
+		vctx, vcancel := context.WithTimeout(ctx, 25*time.Second)
+		inv, err := a.pay.InvoiceStatus(vctx, o.InvoiceID)
+		vcancel()
 		if err != nil {
 			log.Printf("verifikasi bayar %s: %v", orderID, err)
 			if msgID != 0 {
@@ -1086,17 +1091,18 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 	if a.getUIOrder(chatID) == orderID && msgID == 0 {
 		msgID = a.getUI(chatID)
 	}
+	// flash hanya diedit bila pembeli sedang melihat layar pesanan;
+	// percobaan ulang dari antrian tidak membuat pesan baru.
 	if msgID != 0 {
 		a.show(chatID, msgID, flashText, &flashKB)
 		flashMsgID = msgID
-	} else {
-		flashMsgID = a.show(chatID, 0, flashText, &flashKB)
 	}
 
 	ok, err := a.store.ClaimDelivery(ctx, orderID, chatID)
 	if err != nil {
 		log.Printf("claim delivery %s: %v", orderID, err)
-		a.showError(chatID, flashMsgID, "❌ Gagal memproses pesanan.")
+		_ = a.store.EnqueueDelivery(ctx, orderID, chatID)
+		a.showError(chatID, flashMsgID, "⏳ Gagal memproses pesanan. Sistem akan mencoba ulang otomatis.")
 		return
 	}
 	if !ok {
@@ -1104,7 +1110,8 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		if getErr == nil && o2.Status == "sent" {
 			a.deleteQRIS(o2.ID)
 		} else {
-			a.showError(chatID, flashMsgID, "⏳ Pesanan sedang diproses. Coba cek lagi sebentar.")
+			_ = a.store.EnqueueDelivery(ctx, orderID, chatID)
+			a.showError(chatID, flashMsgID, "⏳ Pesanan sedang diproses. Sistem akan menyelesaikannya otomatis.")
 		}
 		return
 	}
@@ -1112,10 +1119,11 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 	accounts, err := a.store.OrderAccounts(ctx, orderID)
 	if err != nil || len(accounts) == 0 {
 		_ = a.store.RevertDelivery(ctx, orderID)
+		_ = a.store.EnqueueDelivery(ctx, orderID, chatID)
 		log.Printf("akun order %s: %v", orderID, err)
 		a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi akun gagal dibaca</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nError: %s",
 			orderID, chatID, html.EscapeString(fmt.Sprint(err))))
-		a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal membaca daftar akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
+		a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal membaca daftar akun. Sistem akan mencoba ulang otomatis; klik Ambil File untuk mempercepat.")
 		return
 	}
 
@@ -1138,10 +1146,11 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		zipPath := filepath.Join(dir, name+".zip")
 		if err := a.buildZip(ctx, part, zipPath); err != nil {
 			_ = a.store.RevertDelivery(ctx, orderID)
+			_ = a.store.EnqueueDelivery(ctx, orderID, chatID)
 			log.Printf("zip %s (bagian %d): %v", orderID, i+1, err)
 			a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi ZIP gagal dibuat</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nError: %s",
 				orderID, chatID, html.EscapeString(err.Error())))
-			a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal menyiapkan file akun. Pembayaran tetap tercatat; klik Ambil File untuk coba lagi.")
+			a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal menyiapkan file akun. Sistem akan mencoba ulang otomatis; klik Ambil File untuk mempercepat.")
 			return
 		}
 
@@ -1161,10 +1170,11 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 
 		if _, err := a.api.Send(doc); err != nil {
 			_ = a.store.RevertDelivery(ctx, orderID)
+			_ = a.store.EnqueueDelivery(ctx, orderID, chatID)
 			log.Printf("kirim dokumen %s (bagian %d/%d): %v", orderID, i+1, len(parts), err)
 			a.notifyAdmins(fmt.Sprintf("⚠️ <b>Order lunas tapi kirim file gagal</b>\nOrder: <code>%s</code>\nChat: <code>%d</code>\nBagian: %d/%d\nError: %s",
 				orderID, chatID, i+1, len(parts), html.EscapeString(err.Error())))
-			a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal mengirim file. Pembayaran tetap tercatat dan stok tidak dilepas; klik Ambil File untuk coba lagi.")
+			a.showDeliveryError(chatID, flashMsgID, orderID, "❌ Gagal mengirim file. Sistem akan mencoba ulang otomatis; klik Ambil File untuk mempercepat.")
 			return
 		}
 		// bebaskan tmpfs segera; jangan tunggu semua bagian selesai
@@ -1174,7 +1184,10 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 	finalized := false
 	var finalErr error
 	for i := 0; i < 5; i++ {
-		if finalErr = a.store.Finalize(ctx, orderID); finalErr == nil {
+		fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		finalErr = a.store.Finalize(fctx, orderID)
+		fcancel()
+		if finalErr == nil {
 			finalized = true
 			break
 		}
@@ -1182,8 +1195,13 @@ func (a *App) deliverOrder(ctx context.Context, chatID int64, msgID int, orderID
 		time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
 	}
 	if !finalized {
-		a.notifyAdmins(fmt.Sprintf("⚠️ <b>File terkirim tapi finalize gagal</b>\nOrder: <code>%s</code>\nError: %s",
+		// file sudah terkirim tapi DB belum ditutup; serahkan ke antrian
+		// untuk finalisasi ulang agar order tidak menggantung selamanya.
+		_ = a.store.EnqueueDelivery(ctx, orderID, chatID)
+		a.notifyAdmins(fmt.Sprintf("⚠️ <b>File terkirim tapi finalize gagal</b>\nOrder: <code>%s</code>\nError: %s\nAntrian akan merapikan status otomatis.",
 			orderID, html.EscapeString(fmt.Sprint(finalErr))))
+		a.showDeliveryError(chatID, flashMsgID, orderID, "⏳ File sudah dikirim. Pesanan sedang dirapikan sistem — tidak perlu bayar ulang dan tidak perlu klik apa pun.")
+		return
 	}
 	_ = a.store.SetInvoiceStatus(ctx, orderID, "paid")
 	a.deleteQRIS(orderID)
@@ -1407,6 +1425,96 @@ func (a *App) expireOrder(ctx context.Context, o *Order, msgID int) {
 		)
 		a.show(o.ChatID, msgID, a.message("msg_expired", map[string]any{"OrderID": o.ID}), &kb)
 	}
+}
+
+// startDeliveryWorker memulihkan order lunas yang tertangguh lalu menjalankan
+// worker antrian pengiriman di latar belakang.
+func (a *App) startDeliveryWorker() {
+	ctx := context.Background()
+	if tasks, err := a.store.StuckDeliveries(ctx); err == nil {
+		for _, t := range tasks {
+			_ = a.store.EnqueueDelivery(ctx, t.OrderID, t.ChatID)
+		}
+		if len(tasks) > 0 {
+			log.Printf("antrian kirim: %d order dipulihkan saat startup", len(tasks))
+		}
+	} else {
+		log.Printf("antrian kirim: scan awal gagal: %v", err)
+	}
+	go a.deliveryQueueWorker(ctx)
+}
+
+func (a *App) deliveryQueueWorker(ctx context.Context) {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tasks, err := a.store.DueDeliveries(ctx, 1)
+			if err != nil {
+				log.Printf("antrian kirim: ambil tugas: %v", err)
+				continue
+			}
+			for _, t := range tasks {
+				a.runDeliveryTask(t)
+			}
+		}
+	}
+}
+
+func (a *App) runDeliveryTask(t DeliveryTask) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	o, err := a.store.GetOrder(ctx, t.OrderID)
+	if err != nil || o.Status == "sent" || o.Status == "cancelled" {
+		_ = a.store.DequeueDelivery(ctx, t.OrderID)
+		return
+	}
+	if o.Status == "processing" {
+		// file kemungkinan besar sudah terkirim di percobaan sebelumnya;
+		// cukup finalisasi agar status pesanan tidak menggantung.
+		fctx, fcancel := context.WithTimeout(ctx, 15*time.Second)
+		ferr := a.store.Finalize(fctx, t.OrderID)
+		fcancel()
+		if ferr == nil {
+			_ = a.store.DequeueDelivery(ctx, t.OrderID)
+			a.notifyAdmins(fmt.Sprintf("ℹ️ <b>Antrian kirim</b>\nOrder: <code>%s</code>\nFile sudah terkirim sebelumnya; status pesanan dirapikan menjadi terkirim.", t.OrderID))
+			return
+		}
+		a.requeueDelivery(t, ferr)
+		return
+	}
+	a.deliverOrder(context.Background(), o.ChatID, 0, t.OrderID, true)
+	o2, gerr := a.store.GetOrder(ctx, t.OrderID)
+	if gerr == nil && o2.Status == "sent" {
+		_ = a.store.DequeueDelivery(ctx, t.OrderID)
+		return
+	}
+	cause := fmt.Errorf("status %s", o.Status)
+	if gerr == nil {
+		cause = fmt.Errorf("status %s", o2.Status)
+	}
+	a.requeueDelivery(t, cause)
+}
+
+func (a *App) requeueDelivery(t DeliveryTask, cause error) {
+	ctx := context.Background()
+	attempts := t.Attempts + 1
+	if attempts > 12 {
+		_ = a.store.DequeueDelivery(ctx, t.OrderID)
+		a.notifyAdmins(fmt.Sprintf("⚠️ <b>Antrian kirim berhenti</b>\nOrder: <code>%s</code>\nPercobaan: %d\nTerakhir: %s\nSilakan gunakan Kirim Ulang di panel.",
+			t.OrderID, attempts, html.EscapeString(cause.Error())))
+		return
+	}
+	delay := time.Duration(1<<uint(attempts)) * time.Minute
+	if delay > 30*time.Minute {
+		delay = 30 * time.Minute
+	}
+	_ = a.store.DeliveryRetry(ctx, t.OrderID, attempts, delay, cause.Error())
+	log.Printf("antrian kirim %s: percobaan %d dijadwalkan %s lagi (%v)", t.OrderID, attempts, delay, cause)
 }
 
 func (a *App) startPoller(orderID string) {

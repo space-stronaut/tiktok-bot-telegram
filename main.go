@@ -144,6 +144,7 @@ func main() {
 	app := newApp(cfg, store, pay, api, loc)
 	app.loadTexts(settings)
 	app.setupBotMenu()
+	go app.startDeliveryWorker()
 	ctx := context.Background()
 
 	admin, err := NewAdminServer(app)

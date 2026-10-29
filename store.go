@@ -65,6 +65,17 @@ const schemaOrders = `CREATE TABLE IF NOT EXISTS orders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
 
 var orderMigrations = []string{
+	`CREATE TABLE IF NOT EXISTS delivery_queue (
+	id BIGINT AUTO_INCREMENT PRIMARY KEY,
+	order_id VARCHAR(80) NOT NULL UNIQUE,
+	chat_id BIGINT NOT NULL,
+	attempts INT NOT NULL DEFAULT 0,
+	next_attempt_at DATETIME NOT NULL,
+	last_error TEXT NULL,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+	KEY idx_next_attempt (next_attempt_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_per_account BIGINT NOT NULL DEFAULT 0`,
 	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_price BIGINT NOT NULL DEFAULT 0`,
 	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at DATETIME NULL`,
@@ -208,6 +219,10 @@ type s3Account struct {
 
 func (s *Store) Sync(ctx context.Context) (int, error) {
 	res, err := s.sync(ctx, false)
+	if err != nil && isRetryableMySQL(err) {
+		time.Sleep(2 * time.Second)
+		res, err = s.sync(ctx, false)
+	}
 	return res.Total, err
 }
 
@@ -215,7 +230,12 @@ func (s *Store) Sync(ctx context.Context) (int, error) {
 // membersihkan baris lama yang objeknya sudah tidak ada dan memetakan ulang
 // akun terjual/reserved yang objeknya berpindah path.
 func (s *Store) SyncReconcile(ctx context.Context) (SyncResult, error) {
-	return s.sync(ctx, true)
+	res, err := s.sync(ctx, true)
+	if err != nil && isRetryableMySQL(err) {
+		time.Sleep(2 * time.Second)
+		res, err = s.sync(ctx, true)
+	}
+	return res, err
 }
 
 func (s *Store) sync(ctx context.Context, reconcile bool) (SyncResult, error) {
@@ -629,6 +649,72 @@ func (s *Store) SetInvoice(ctx context.Context, orderID string, inv *Invoice, ex
 func (s *Store) SetInvoiceStatus(ctx context.Context, orderID, status string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE orders SET invoice_status = ? WHERE id = ?`, status, orderID)
 	return err
+}
+
+type DeliveryTask struct {
+	OrderID  string
+	ChatID   int64
+	Attempts int
+}
+
+func (s *Store) EnqueueDelivery(ctx context.Context, orderID string, chatID int64) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO delivery_queue (order_id, chat_id, next_attempt_at)
+		VALUES (?, ?, UTC_TIMESTAMP())
+		ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP`, orderID, chatID)
+	return err
+}
+
+func (s *Store) DueDeliveries(ctx context.Context, limit int) ([]DeliveryTask, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT order_id, chat_id, attempts FROM delivery_queue
+		WHERE next_attempt_at <= UTC_TIMESTAMP() ORDER BY next_attempt_at LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeliveryTask
+	for rows.Next() {
+		var t DeliveryTask
+		if err := rows.Scan(&t.OrderID, &t.ChatID, &t.Attempts); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeliveryRetry(ctx context.Context, orderID string, attempts int, delay time.Duration, cause string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE delivery_queue
+		SET attempts = ?, next_attempt_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND), last_error = ?
+		WHERE order_id = ?`, attempts, int(delay.Seconds()), cause, orderID)
+	return err
+}
+
+func (s *Store) DequeueDelivery(ctx context.Context, orderID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM delivery_queue WHERE order_id = ?`, orderID)
+	return err
+}
+
+// StuckDeliveries mengembalikan order lunas yang belum terkirim maupun
+// processing menggantung, untuk dimasukkan ke antrian saat startup.
+func (s *Store) StuckDeliveries(ctx context.Context) ([]DeliveryTask, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.chat_id FROM orders o
+		WHERE (o.status = 'processing'
+			OR (o.status = 'paid' AND o.invoice_status = 'paid'))
+		AND NOT EXISTS (SELECT 1 FROM delivery_queue q WHERE q.order_id = o.id)
+		AND o.created_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeliveryTask
+	for rows.Next() {
+		var t DeliveryTask
+		if err := rows.Scan(&t.OrderID, &t.ChatID); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) PendingOrderByChat(ctx context.Context, chatID int64) (*Order, error) {
