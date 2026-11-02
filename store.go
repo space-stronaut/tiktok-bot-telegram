@@ -718,6 +718,33 @@ func (s *Store) ClearQRISRef(ctx context.Context, orderID string) error {
 	return err
 }
 
+// StaleQRISRefs mengembalikan pesan QRIS yang ordernya sudah selesai/batal
+// tapi pesannya masih tersimpan — untuk dibersihkan saat startup.
+func (s *Store) StaleQRISRefs(ctx context.Context) ([]StaleQRIS, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(qris_chat_id, 0), COALESCE(qris_msg_id, 0)
+		FROM orders WHERE qris_msg_id IS NOT NULL AND status <> 'pending'
+		AND created_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 45 HOUR)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StaleQRIS
+	for rows.Next() {
+		var r StaleQRIS
+		if err := rows.Scan(&r.OrderID, &r.ChatID, &r.MsgID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+type StaleQRIS struct {
+	OrderID string
+	ChatID  int64
+	MsgID   int
+}
+
 // StuckDeliveries mengembalikan order lunas yang belum terkirim maupun
 // processing menggantung, untuk dimasukkan ke antrian saat startup.
 func (s *Store) StuckDeliveries(ctx context.Context) ([]DeliveryTask, error) {

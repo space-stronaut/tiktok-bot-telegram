@@ -1463,6 +1463,7 @@ func (a *App) expireOrder(ctx context.Context, o *Order, msgID int) {
 // worker antrian pengiriman di latar belakang.
 func (a *App) startDeliveryWorker() {
 	ctx := context.Background()
+	a.sweepStaleQRIS(ctx)
 	if tasks, err := a.store.StuckDeliveries(ctx); err == nil {
 		for _, t := range tasks {
 			_ = a.store.EnqueueDelivery(ctx, t.OrderID, t.ChatID)
@@ -1474,6 +1475,27 @@ func (a *App) startDeliveryWorker() {
 		log.Printf("antrian kirim: scan awal gagal: %v", err)
 	}
 	go a.deliveryQueueWorker(ctx)
+}
+
+// sweepStaleQRIS menghapus pesan QRIS yang ordernya sudah selesai/batal
+// (mis. kedaluwarsa tepat saat bot restart) dan membersihkan referensinya.
+func (a *App) sweepStaleQRIS(ctx context.Context) {
+	refs, err := a.store.StaleQRISRefs(ctx)
+	if err != nil {
+		log.Printf("sweep qris: ambil referensi: %v", err)
+		return
+	}
+	cleaned := 0
+	for _, r := range refs {
+		if r.MsgID != 0 {
+			a.deleteMessage(r.ChatID, r.MsgID)
+			cleaned++
+		}
+		_ = a.store.ClearQRISRef(ctx, r.OrderID)
+	}
+	if cleaned > 0 {
+		log.Printf("sweep qris: %d pesan lama dihapus", cleaned)
+	}
 }
 
 func (a *App) deliveryQueueWorker(ctx context.Context) {
