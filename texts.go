@@ -138,7 +138,10 @@ Simpan file ini.`,
 		Label:        "Pesanan kedaluwarsa",
 		Description:  "Pesan saat QRIS kedaluwarsa dan stok dikembalikan.",
 		Placeholders: "{{.OrderID}}",
-		Default:      `⌛ QRIS order <code>{{.OrderID}}</code> kedaluwarsa. Stok sudah dikembalikan.`,
+		Default: `❌ <b>QRIS sudah tidak berlaku</b> (batas bayar 10 menit).
+
+Order <code>{{.OrderID}}</code> dibatalkan dan stok sudah dilepas.
+Jangan bayar QRIS lama — silakan buat pesanan baru untuk mendapat QRIS aktif.`,
 	},
 }
 

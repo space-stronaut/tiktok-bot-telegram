@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const paymentExpiryMinutes = 15
+const paymentExpiryMinutes = 10
 
 type PanzzPay struct {
 	base    string

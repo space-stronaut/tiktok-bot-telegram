@@ -839,6 +839,26 @@ func (a *App) qrisMessage(o *Order, existed bool) (string, *tgbotapi.InlineKeybo
 	return text, &kb
 }
 
+// warnQRISExpiring mengedit caption pesan QRIS untuk memperingatkan bahwa
+// masa berlaku QRIS hampir habis, supaya pembeli tidak membayar QRIS mati.
+func (a *App) warnQRISExpiring(o *Order, remaining time.Duration) {
+	msgID := a.getQRIS(o.ID)
+	if msgID == 0 {
+		return
+	}
+	text, kb := a.qrisMessage(o, true)
+	minutes := int(remaining.Minutes()) + 1
+	text += fmt.Sprintf("\n\n⚠️ <b>QRIS berlaku kurang dari %d menit!</b> Segera bayar sebelum habis — QRIS yang lewat masa berlaku tidak bisa diterima.", minutes)
+	e := tgbotapi.NewEditMessageCaption(o.ChatID, msgID, text)
+	e.ParseMode = tgbotapi.ModeHTML
+	if kb != nil {
+		e.ReplyMarkup = kb
+	}
+	if _, err := a.api.Send(e); err != nil && !strings.Contains(err.Error(), "message is not modified") {
+		log.Printf("peringatan qris %s: %v", o.ID, err)
+	}
+}
+
 func (a *App) showQRISWindow(chatID int64, msgID int, o *Order, existed bool) int {
 	a.setUIOrder(chatID, o.ID)
 	text, kb := a.qrisMessage(o, existed)
@@ -1538,10 +1558,19 @@ func (a *App) pollOrder(orderID string) {
 	deadline := time.Now().Add(24 * time.Hour)
 	interval := 5 * time.Second
 	reviewNotified := false
+	qrisWarned := false
 	for time.Now().Before(deadline) {
 		o, err := a.store.GetOrder(context.Background(), orderID)
 		if err != nil || o.Status != "pending" || o.InvoiceID == "" {
 			return
+		}
+		// peringatan 2 menit sebelum QRIS habis masa berlaku
+		if !qrisWarned && o.InvoiceExpiresAt.Valid {
+			remaining := time.Until(o.InvoiceExpiresAt.Time)
+			if remaining > 0 && remaining <= 2*time.Minute {
+				qrisWarned = true
+				a.warnQRISExpiring(o, remaining)
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		inv, err := a.pay.InvoiceStatus(ctx, o.InvoiceID)
