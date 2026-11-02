@@ -842,14 +842,14 @@ func (a *App) qrisMessage(o *Order, existed bool) (string, *tgbotapi.InlineKeybo
 // warnQRISExpiring mengedit caption pesan QRIS untuk memperingatkan bahwa
 // masa berlaku QRIS hampir habis, supaya pembeli tidak membayar QRIS mati.
 func (a *App) warnQRISExpiring(o *Order, remaining time.Duration) {
-	msgID := a.getQRIS(o.ID)
-	if msgID == 0 {
+	ref := a.qrisRefLookup(o.ID)
+	if ref.msgID == 0 {
 		return
 	}
 	text, kb := a.qrisMessage(o, true)
 	minutes := int(remaining.Minutes()) + 1
 	text += fmt.Sprintf("\n\n⚠️ <b>QRIS berlaku kurang dari %d menit!</b> Segera bayar sebelum habis — QRIS yang lewat masa berlaku tidak bisa diterima.", minutes)
-	e := tgbotapi.NewEditMessageCaption(o.ChatID, msgID, text)
+	e := tgbotapi.NewEditMessageCaption(o.ChatID, ref.msgID, text)
 	e.ParseMode = tgbotapi.ModeHTML
 	if kb != nil {
 		e.ReplyMarkup = kb
@@ -1444,6 +1444,18 @@ func (a *App) expireOrder(ctx context.Context, o *Order, msgID int) {
 			),
 		)
 		a.show(o.ChatID, msgID, a.message("msg_expired", map[string]any{"OrderID": o.ID}), &kb)
+	} else if time.Since(o.CreatedAt) < 30*time.Minute {
+		// pembeli tidak sedang melihat layar pesanan (mis. bot sempat
+		// restart) — tetap beri tahu lewat pesan baru supaya jelas QRIS
+		// lama sudah tidak berlaku.
+		a.clearUIOrder(o.ChatID)
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🛍️ Beli Akun", "shop"),
+				tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
+			),
+		)
+		a.show(o.ChatID, 0, a.message("msg_expired", map[string]any{"OrderID": o.ID}), &kb)
 	}
 }
 
@@ -1954,8 +1966,13 @@ func (a *App) clearUIOrder(chatID int64) {
 
 func (a *App) setQRIS(chatID int64, orderID string, msgID int) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.qris[orderID] = qrisRef{chatID: chatID, msgID: msgID}
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.store.SetQRISRef(ctx, orderID, chatID, msgID); err != nil {
+		log.Printf("simpan ref qris %s: %v", orderID, err)
+	}
 }
 
 func (a *App) getQRIS(orderID string) int {
@@ -1964,14 +1981,38 @@ func (a *App) getQRIS(orderID string) int {
 	return a.qris[orderID].msgID
 }
 
+// qrisRefLookup mengembalikan referensi QRIS dari memori, lalu dari DB
+// (fallback setelah restart).
+func (a *App) qrisRefLookup(orderID string) qrisRef {
+	a.mu.Lock()
+	ref := a.qris[orderID]
+	a.mu.Unlock()
+	if ref.msgID != 0 {
+		return ref
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	chatID, msgID, err := a.store.QRISRef(ctx, orderID)
+	if err != nil || msgID == 0 {
+		return qrisRef{}
+	}
+	return qrisRef{chatID: chatID, msgID: msgID}
+}
+
 func (a *App) deleteQRIS(orderID string) {
 	a.mu.Lock()
 	ref := a.qris[orderID]
 	delete(a.qris, orderID)
 	a.mu.Unlock()
+	if ref.msgID == 0 {
+		ref = a.qrisRefLookup(orderID)
+	}
 	if ref.msgID != 0 {
 		a.deleteMessage(ref.chatID, ref.msgID)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = a.store.ClearQRISRef(ctx, orderID)
 }
 
 func (a *App) setUI(chatID int64, msgID int) {

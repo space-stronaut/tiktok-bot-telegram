@@ -65,6 +65,8 @@ const schemaOrders = `CREATE TABLE IF NOT EXISTS orders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
 
 var orderMigrations = []string{
+	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS qris_chat_id BIGINT NULL`,
+	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS qris_msg_id INT NULL`,
 	`CREATE TABLE IF NOT EXISTS delivery_queue (
 	id BIGINT AUTO_INCREMENT PRIMARY KEY,
 	order_id VARCHAR(80) NOT NULL UNIQUE,
@@ -691,6 +693,28 @@ func (s *Store) DeliveryRetry(ctx context.Context, orderID string, attempts int,
 
 func (s *Store) DequeueDelivery(ctx context.Context, orderID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM delivery_queue WHERE order_id = ?`, orderID)
+	return err
+}
+
+// SetQRISRef menyimpan referensi pesan QRIS ke DB supaya pesan tetap bisa
+// dihapus setelah bot restart (peta di memori hilang saat restart).
+func (s *Store) SetQRISRef(ctx context.Context, orderID string, chatID int64, msgID int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE orders SET qris_chat_id = ?, qris_msg_id = ? WHERE id = ?`,
+		chatID, msgID, orderID)
+	return err
+}
+
+// QRISRef membaca referensi pesan QRIS dari DB.
+func (s *Store) QRISRef(ctx context.Context, orderID string) (int64, int, error) {
+	var chatID int64
+	var msgID int
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(qris_chat_id, 0), COALESCE(qris_msg_id, 0)
+		FROM orders WHERE id = ?`, orderID).Scan(&chatID, &msgID)
+	return chatID, msgID, err
+}
+
+func (s *Store) ClearQRISRef(ctx context.Context, orderID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE orders SET qris_chat_id = NULL, qris_msg_id = NULL WHERE id = ?`, orderID)
 	return err
 }
 
