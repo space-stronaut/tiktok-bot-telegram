@@ -78,7 +78,13 @@
             <label class="form-label small fw-semibold" for="admin_contact_url">Tombol Hubungi Admin</label>
             <input class="form-control mono" id="admin_contact_url" name="admin_contact_url" type="text"
                    value="{{.Settings.AdminContactURL}}" placeholder="tg://user?id=123456789">
-            <div class="form-text">Format <code>tg://user?id=CHAT_ID</code> atau <code>https://t.me/username</code>. Kosongkan untuk menyembunyikan tombol. Catatan: tombol tg://user hanya aktif setelah user tersebut pernah chat bot.</div>
+            <div class="form-text">Format <code>tg://user?id=CHAT_ID</code> atau <code>https://t.me/username</code>. Kosongkan kolom = tidak berubah. Catatan: tombol tg://user hanya aktif setelah user tersebut pernah chat bot.</div>
+            {{if .Settings.AdminContactURL}}
+            <div class="form-check mt-1">
+              <input class="form-check-input" type="checkbox" name="hapus_kontak" value="1" id="hapus_kontak">
+              <label class="form-check-label small" for="hapus_kontak">Hapus tombol Hubungi Admin</label>
+            </div>
+            {{end}}
           </div>
         </div>
       </div>

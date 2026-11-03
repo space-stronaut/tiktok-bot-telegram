@@ -972,6 +972,7 @@ func (s *AdminServer) handleSettingsPost(w http.ResponseWriter, r *http.Request)
 	maxZipMB := atoi64Default(r.PostFormValue("max_zip_mb"), 0)
 	homeBanner := strings.TrimSpace(r.PostFormValue("home_banner_url"))
 	adminContact := strings.TrimSpace(r.PostFormValue("admin_contact_url"))
+	hapusKontak := r.PostFormValue("hapus_kontak") == "1"
 
 	uploaded := false
 	urlBanner, uerr := s.storeBannerUpload(r)
@@ -1037,6 +1038,14 @@ func (s *AdminServer) handleSettingsPost(w http.ResponseWriter, r *http.Request)
 	}
 	if token != "" {
 		values[settingsKeyBotToken] = token
+	}
+	// kolom kontak kosong TIDAK menghapus nilai tersimpan (mencegah wipe
+	// tidak sengaja saat form disimpan dari tab lama); penghapusan harus
+	// lewat checkbox "Hapus tombol".
+	if hapusKontak {
+		values[settingsKeyAdminContact] = ""
+	} else if adminContact == "" {
+		delete(values, settingsKeyAdminContact)
 	}
 	if err := s.store.SetSettings(r.Context(), values); err != nil {
 		redirectFlash(w, r, "/settings", "err", "Gagal menyimpan: "+err.Error())
