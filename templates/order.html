@@ -14,8 +14,8 @@
 <div class="alert alert-danger d-flex gap-2 align-items-start shadow-sm">
   <i class="bi bi-exclamation-triangle fs-4"></i>
   <div>
-    <div class="fw-semibold">Pembayaran tertahan di review Nexus.</div>
-    <div class="small">Jika pelanggan sudah benar-benar membayar, gunakan <b>Sync Nexus</b> dulu. Bila Nexus tetap review, gunakan <b>Tandai Lunas &amp; Kirim</b> untuk bypass verifikasi dan mengirim file.</div>
+    <div class="fw-semibold">Pembayaran tertahan di review PanzzPay.</div>
+    <div class="small">Jika pelanggan sudah benar-benar membayar, gunakan <b>Sync PanzzPay</b> dulu. Bila status tetap review, gunakan <b>Tandai Lunas &amp; Kirim</b> untuk bypass verifikasi dan mengirim file.</div>
   </div>
 </div>
 {{end}}
@@ -115,27 +115,27 @@
         <form method="post" action="/orders/{{.Order.ID}}/sync">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <button class="btn btn-outline-primary w-100" type="submit" {{if not .Order.InvoiceID}}disabled{{end}}>
-            <i class="bi bi-arrow-repeat me-1"></i>Sync status dari Nexus
+            <i class="bi bi-arrow-repeat me-1"></i>Sync status dari PanzzPay
           </button>
         </form>
         {{end}}
 
         {{if or (eq .Order.Status "pending") (eq .Order.Status "paid")}}
         <form method="post" action="/orders/{{.Order.ID}}/mark-paid"
-              data-confirm="{{if eq .Order.Status "pending"}}Tandai order ini LUNAS tanpa verifikasi Nexus lalu kirim file ke pelanggan?{{else}}Kirim ulang file tanpa verifikasi Nexus?{{end}}">
+              data-confirm="{{if eq .Order.Status "pending"}}Tandai order ini LUNAS tanpa verifikasi PanzzPay lalu kirim file ke pelanggan?{{else}}Kirim ulang file tanpa verifikasi PanzzPay?{{end}}">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <button class="btn btn-danger w-100" type="submit">
-            <i class="bi bi-shield-check me-1"></i>{{if eq .Order.Status "pending"}}Tandai Lunas &amp; Kirim{{else}}Kirim Ulang (bypass Nexus){{end}}
+            <i class="bi bi-shield-check me-1"></i>{{if eq .Order.Status "pending"}}Tandai Lunas &amp; Kirim{{else}}Kirim Ulang (bypass PanzzPay){{end}}
           </button>
         </form>
         {{end}}
 
         {{if or (eq .Order.Status "pending") (eq .Order.Status "paid")}}
         <form method="post" action="/orders/{{.Order.ID}}/deliver"
-              data-confirm="Kirim file sekarang? Status pembayaran akan diverifikasi ulang ke Nexus.">
+              data-confirm="Kirim file sekarang? Status pembayaran akan diverifikasi ulang ke PanzzPay.">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <button class="btn btn-outline-success w-100" type="submit">
-            <i class="bi bi-send me-1"></i>Kirim file (verifikasi Nexus)
+            <i class="bi bi-send me-1"></i>Kirim file (verifikasi PanzzPay)
           </button>
         </form>
         {{end}}

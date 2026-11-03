@@ -39,7 +39,7 @@
   </div>
   <div class="col-6 col-xl">
     <div class="card h-100 shadow-sm border-danger-subtle"><div class="card-body">
-      <div class="text-secondary small">Review Nexus</div>
+      <div class="text-secondary small">Review PanzzPay</div>
       <div class="metric text-danger">{{.Stats.Review}}</div>
     </div></div>
   </div>
@@ -95,7 +95,14 @@
     <div class="card shadow-sm h-100">
       <div class="card-header bg-white d-flex justify-content-between align-items-center">
         <span class="fw-semibold"><i class="bi bi-box-seam me-1"></i>Stok per tanggal</span>
-        <a href="/stock" class="small text-decoration-none">Detail</a>
+        <span class="d-flex gap-2">
+          {{if .ShowAll}}
+          <a href="/" class="small text-decoration-none">Sembunyikan kosong</a>
+          {{else}}
+          <a href="/?stockshowall=1" class="small text-decoration-none">Tampilkan kosong</a>
+          {{end}}
+          <a href="/stock" class="small text-decoration-none">Detail</a>
+        </span>
       </div>
       <div class="table-responsive">
         <table class="table table-hover table-tight align-middle mb-0">

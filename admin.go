@@ -502,6 +502,16 @@ func (s *AdminServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, "Gagal memuat stok: "+err.Error())
 		return
 	}
+	showAll := r.URL.Query().Get("stockshowall") == "1"
+	if !showAll {
+		filtered := stock[:0]
+		for _, row := range stock {
+			if row.Available > 0 {
+				filtered = append(filtered, row)
+			}
+		}
+		stock = filtered
+	}
 	s.render(w, r, "dashboard", &pageData{
 		Title:       "Dashboard",
 		Active:      "dashboard",
@@ -509,6 +519,7 @@ func (s *AdminServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Orders:      orders,
 		Stock:       stock,
 		Maintenance: s.app.cfg.Maintenance,
+		ShowAll:     showAll,
 	})
 }
 

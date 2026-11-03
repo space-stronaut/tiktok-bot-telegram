@@ -21,7 +21,7 @@
               <td>{{if gt .Available 0}}<span class="badge text-bg-success">{{.Available}} akun</span>{{else}}<span class="badge text-bg-secondary">habis</span>{{end}}</td>
               <td>
                 {{if .Custom}}<span class="badge text-bg-warning me-1">custom</span>{{end}}
-                <b>{{rupiah (ternary .Price .DefaultPrice .Custom)}}</b>
+                <b>{{rupiah (ternary .Price $.DefaultPrice .Custom)}}</b>
               </td>
               <td>
                 <div class="input-group input-group-sm">

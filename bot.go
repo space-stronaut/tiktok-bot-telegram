@@ -422,11 +422,22 @@ func (a *App) showShop(chatID int64, msgID int) int {
 		return a.show(chatID, msgID, "📭 Belum ada akun yang tersedia.", &kb)
 	}
 
-	// kelompokkan berdasarkan umur akun per 5 hari: 0-5, 6-10, dst.
+	// kelompok umur: 0-5, 6-10, 11-15, dst.; kelompok terakhir menyesuaikan
+	// umur tertinggi yang tersedia (mis. 16-18).
+	maxAge := 0
 	groups := make(map[int]int)
 	for _, d := range dates {
 		age := accountAgeDays(d.Date, a.loc)
-		groups[(age/5)*5]++
+		if age > maxAge {
+			maxAge = age
+		}
+		var start int
+		if age <= 5 {
+			start = 0
+		} else {
+			start = ((age-1)/5)*5 + 1
+		}
+		groups[start]++
 	}
 	keys := make([]int, 0, len(groups))
 	for g := range groups {
@@ -436,9 +447,19 @@ func (a *App) showShop(chatID int64, msgID int) int {
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, g := range keys {
-		label := fmt.Sprintf("📅 Umur %d–%d Hari (%d tanggal)", g, g+4, groups[g])
+		end := g + 4
+		if g == 0 {
+			end = 5
+		}
+		if end > maxAge {
+			end = maxAge
+		}
+		label := fmt.Sprintf("📅 Umur %d–%d Hari (%d tanggal)", g, end, groups[g])
+		if g == end {
+			label = fmt.Sprintf("📅 Umur %d Hari (%d tanggal)", g, groups[g])
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("age:%d", g)),
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("age:%d:%d", g, end)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -451,7 +472,7 @@ func (a *App) showShop(chatID int64, msgID int) int {
 }
 
 // onAgeGroup menampilkan daftar tanggal dalam kelompok umur terpilih.
-func (a *App) onAgeGroup(chatID int64, msgID int, ageStart int) {
+func (a *App) onAgeGroup(chatID int64, msgID int, ageStart, ageEnd int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	a.clearUIOrder(chatID)
@@ -464,7 +485,7 @@ func (a *App) onAgeGroup(chatID int64, msgID int, ageStart int) {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, d := range dates {
 		age := accountAgeDays(d.Date, a.loc)
-		if age < ageStart || age > ageStart+4 {
+		if age < ageStart || age > ageEnd {
 			continue
 		}
 		label := fmt.Sprintf("📅 %s (%d Hari)", formatDateFullID(d.Date), age)
@@ -487,7 +508,7 @@ func (a *App) onAgeGroup(chatID int64, msgID int, ageStart int) {
 		),
 	)
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	text := fmt.Sprintf("📅 <b>Akun umur %d–%d hari</b>\n\nPilih tanggal akun:", ageStart, ageStart+4)
+	text := fmt.Sprintf("📅 <b>Akun umur %d–%d hari</b>\n\nPilih tanggal akun:", ageStart, ageEnd)
 	a.show(chatID, msgID, text, &kb)
 }
 
@@ -687,11 +708,16 @@ func (a *App) handleCallback(cq *tgbotapi.CallbackQuery) {
 	case data == "shop":
 		a.showShop(chatID, msgID)
 	case strings.HasPrefix(data, "age:"):
-		g, err := strconv.Atoi(strings.TrimPrefix(data, "age:"))
-		if err != nil || g < 0 {
+		parts := strings.Split(strings.TrimPrefix(data, "age:"), ":")
+		if len(parts) != 2 {
 			return
 		}
-		a.onAgeGroup(chatID, msgID, g)
+		start, err1 := strconv.Atoi(parts[0])
+		end, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil || start < 0 || end < start {
+			return
+		}
+		a.onAgeGroup(chatID, msgID, start, end)
 	case data == "help":
 		a.showHelp(chatID, msgID)
 	case data == "myorders":
@@ -2037,7 +2063,10 @@ func (a *App) show(chatID int64, msgID int, text string, kb *tgbotapi.InlineKeyb
 			a.setUI(chatID, msgID)
 			return msgID
 		} else {
-			log.Printf("edit pesan %d: %v", msgID, err)
+			// pesan lama tidak bisa diedit jadi teks (mis. pesan foto/QRIS):
+			// hapus supaya tidak menumpuk, lalu kirim pesan baru.
+			log.Printf("edit pesan %d: %v — hapus & kirim baru", msgID, err)
+			a.deleteMessage(chatID, msgID)
 		}
 	}
 
