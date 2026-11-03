@@ -38,23 +38,22 @@ type session struct {
 }
 
 type App struct {
-	cfg          Config
-	store        *Store
-	pay          *PanzzPay
-	api          *tgbotapi.BotAPI
-	loc          *time.Location
-	mu           sync.Mutex
-	sessions     map[int64]*session
-	busy         map[int64]bool
-	ui           map[int64]int
-	uiVer        map[int64]int
-	uiOrder      map[int64]string
-	qris         map[string]qrisRef
-	pollers      map[string]bool
-	blocked      map[int64]bool
-	lastShopSync time.Time
-	textsMu      sync.RWMutex
-	texts        map[string]string
+	cfg      Config
+	store    *Store
+	pay      *PanzzPay
+	api      *tgbotapi.BotAPI
+	loc      *time.Location
+	mu       sync.Mutex
+	sessions map[int64]*session
+	busy     map[int64]bool
+	ui       map[int64]int
+	uiVer    map[int64]int
+	uiOrder  map[int64]string
+	qris     map[string]qrisRef
+	pollers  map[string]bool
+	blocked  map[int64]bool
+	textsMu  sync.RWMutex
+	texts    map[string]string
 }
 
 type qrisRef struct {
@@ -231,7 +230,9 @@ func (a *App) run() {
 
 func (a *App) maintenance(ctx context.Context) {
 	a.maintenanceOnce(ctx)
-	t := time.NewTicker(5 * time.Minute)
+	// sync S3 berjalan penuh di background; tap pengguna tidak pernah
+	// menunggu sync. Interval 2 menit menjaga stok tetap segar.
+	t := time.NewTicker(2 * time.Minute)
 	defer t.Stop()
 	for {
 		select {
@@ -436,21 +437,8 @@ func (a *App) showShop(chatID int64, msgID int) int {
 	defer cancel()
 	a.clearUIOrder(chatID)
 
-	// sync S3 itu berat (list ribuan objek, ±7 detik): jangan jalan tiap
-	// tap — cukup sekali per 2 menit; rekonsiliasi rutin tiap 5 menit
-	// sudah menjaga stok tetap segar.
-	a.mu.Lock()
-	last := a.lastShopSync
-	a.mu.Unlock()
-	if time.Since(last) > 2*time.Minute {
-		if _, err := a.store.Sync(ctx); err != nil {
-			log.Printf("sync shop: %v", err)
-		} else {
-			a.mu.Lock()
-			a.lastShopSync = time.Now()
-			a.mu.Unlock()
-		}
-	}
+	// murni baca DB — sync S3 sudah berjalan penuh di background
+	// (maintenance tiap 2 menit), tap pengguna tidak pernah menunggu.
 	dates, err := a.store.Dates(ctx)
 	if err != nil {
 		return a.showError(chatID, msgID, "❌ Gagal membaca stok. Coba lagi nanti.")
@@ -543,9 +531,15 @@ func (a *App) onDate(chatID int64, msgID int, date string) {
 		return
 	}
 	if count == 0 {
-		if _, err := a.store.Sync(ctx); err == nil {
-			count, _ = a.store.Available(ctx, date)
-		}
+		// sync di background; tap pengguna tidak menunggu. Upload baru
+		// akan terlihat pada tap/rekonsiliasi berikutnya.
+		go func() {
+			sctx, scancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer scancel()
+			if _, err := a.store.Sync(sctx); err != nil {
+				log.Printf("sync onDate (background): %v", err)
+			}
+		}()
 	}
 	if count == 0 {
 		a.showError(chatID, msgID, "❌ Stok untuk tanggal itu sudah habis.")
