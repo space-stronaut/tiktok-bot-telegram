@@ -454,9 +454,9 @@ func (a *App) showShop(chatID int64, msgID int) int {
 		if end > maxAge {
 			end = maxAge
 		}
-		label := fmt.Sprintf("📅 Umur %d–%d Hari (%d tanggal)", g, end, groups[g])
+		label := fmt.Sprintf("📅 Umur %d–%d Hari", g, end)
 		if g == end {
-			label = fmt.Sprintf("📅 Umur %d Hari (%d tanggal)", g, groups[g])
+			label = fmt.Sprintf("📅 Umur %d Hari", g)
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("age:%d:%d", g, end)),
