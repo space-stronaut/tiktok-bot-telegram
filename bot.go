@@ -403,6 +403,33 @@ func (a *App) showID(chatID int64, msgID int) int {
 	return a.show(chatID, msgID, text, &kb)
 }
 
+type ageBucketDef struct {
+	label string
+	start int
+	end   int
+}
+
+// ageBucket memetakan umur akun ke kelompok penjualan:
+// 0-7, 8-14, 15-21, 22-28, lalu 29++, 60++, 90++.
+func ageBucket(age int) ageBucketDef {
+	switch {
+	case age <= 7:
+		return ageBucketDef{"0–7 Hari", 0, 7}
+	case age <= 14:
+		return ageBucketDef{"8–14 Hari", 8, 14}
+	case age <= 21:
+		return ageBucketDef{"15–21 Hari", 15, 21}
+	case age <= 28:
+		return ageBucketDef{"22–28 Hari", 22, 28}
+	case age <= 59:
+		return ageBucketDef{"29++ Hari", 29, 59}
+	case age <= 89:
+		return ageBucketDef{"60++ Hari", 60, 89}
+	default:
+		return ageBucketDef{"90++ Hari", 90, 100000}
+	}
+}
+
 func (a *App) showShop(chatID int64, msgID int) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -422,44 +449,24 @@ func (a *App) showShop(chatID int64, msgID int) int {
 		return a.show(chatID, msgID, "📭 Belum ada akun yang tersedia.", &kb)
 	}
 
-	// kelompok umur: 0-5, 6-10, 11-15, dst.; kelompok terakhir menyesuaikan
-	// umur tertinggi yang tersedia (mis. 16-18).
-	maxAge := 0
-	groups := make(map[int]int)
+	// kelompok umur: 0-7, 8-14, 15-21, 22-28, lalu 29++, 60++, 90++
+	order := make([]ageBucketDef, 0, 7)
+	seen := make(map[int]bool)
 	for _, d := range dates {
-		age := accountAgeDays(d.Date, a.loc)
-		if age > maxAge {
-			maxAge = age
+		b := ageBucket(accountAgeDays(d.Date, a.loc))
+		if !seen[b.start] {
+			seen[b.start] = true
+			order = append(order, b)
 		}
-		var start int
-		if age <= 5 {
-			start = 0
-		} else {
-			start = ((age-1)/5)*5 + 1
-		}
-		groups[start]++
 	}
-	keys := make([]int, 0, len(groups))
-	for g := range groups {
-		keys = append(keys, g)
-	}
-	sort.Ints(keys)
+	sort.Slice(order, func(i, j int) bool { return order[i].start < order[j].start })
 
 	var rows [][]tgbotapi.InlineKeyboardButton
-	for _, g := range keys {
-		end := g + 4
-		if g == 0 {
-			end = 5
-		}
-		if end > maxAge {
-			end = maxAge
-		}
-		label := fmt.Sprintf("📅 Umur %d–%d Hari", g, end)
-		if g == end {
-			label = fmt.Sprintf("📅 Umur %d Hari", g)
-		}
+	for _, b := range order {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("age:%d:%d", g, end)),
+			tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("📅 Umur %s", b.label),
+				fmt.Sprintf("age:%d:%d", b.start, b.end)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -508,7 +515,7 @@ func (a *App) onAgeGroup(chatID int64, msgID int, ageStart, ageEnd int) {
 		),
 	)
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	text := fmt.Sprintf("📅 <b>Akun umur %d–%d hari</b>\n\nPilih tanggal akun:", ageStart, ageEnd)
+	text := fmt.Sprintf("📅 <b>Akun umur %s</b>\n\nPilih tanggal akun:", ageBucket(ageStart).label)
 	a.show(chatID, msgID, text, &kb)
 }
 
