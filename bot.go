@@ -496,7 +496,7 @@ func (a *App) onAgeGroup(chatID int64, msgID int, ageStart, ageEnd int) {
 		if age < ageStart || age > ageEnd {
 			continue
 		}
-		label := fmt.Sprintf("📅 %s", formatDateFullID(d.Date))
+		label := fmt.Sprintf("📅 %s (%d Hari)", formatDateFullID(d.Date), age)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, "date:"+d.Date.Format("2006-01-02")),
 		))
