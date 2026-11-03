@@ -270,11 +270,15 @@ Cara beli:
 Gunakan tombol <b>Pesanan Saya</b> untuk melihat riwayat.`
 
 func (a *App) handleStart(chatID int64) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if _, err := a.store.Sync(ctx); err != nil {
-		log.Printf("sync saat /start: %v", err)
-	}
+	// sync S3 berat (±7 detik) jalan di background; /start langsung
+	// menampilkan Home tanpa menunggu.
+	go func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer scancel()
+		if _, err := a.store.Sync(sctx); err != nil {
+			log.Printf("sync saat /start (background): %v", err)
+		}
+	}()
 	a.deleteUI(chatID)
 	a.showHome(chatID, 0)
 }
@@ -714,11 +718,12 @@ func (a *App) handleCallback(cq *tgbotapi.CallbackQuery) {
 	switch {
 	case data == "home":
 		a.clearSession(chatID)
-		// hapus pesan layar sebelumnya supaya chat bersih
-		if msgID != 0 {
+		// kirim Home baru DULU, baru hapus pesan lama — supaya chat
+		// tidak pernah kosong sesaat (terutama untuk pengguna baru).
+		newID := a.showHome(chatID, 0)
+		if msgID != 0 && msgID != newID {
 			a.deleteMessage(chatID, msgID)
 		}
-		a.showHome(chatID, 0)
 	case data == "shop":
 		a.showShop(chatID, msgID)
 	case strings.HasPrefix(data, "age:"):
@@ -2078,9 +2083,9 @@ func (a *App) show(chatID int64, msgID int, text string, kb *tgbotapi.InlineKeyb
 			return msgID
 		} else {
 			// pesan lama tidak bisa diedit jadi teks (mis. pesan foto/QRIS):
-			// hapus supaya tidak menumpuk, lalu kirim pesan baru.
-			log.Printf("edit pesan %d: %v — hapus & kirim baru", msgID, err)
-			a.deleteMessage(chatID, msgID)
+			// kirim pesan baru dulu, pesan lama dihapus setelahnya supaya
+			// chat tidak pernah kosong sesaat.
+			log.Printf("edit pesan %d: %v — kirim baru, hapus lama", msgID, err)
 		}
 	}
 
@@ -2093,6 +2098,9 @@ func (a *App) show(chatID int64, msgID int, text string, kb *tgbotapi.InlineKeyb
 	if err != nil {
 		log.Printf("kirim pesan ke %d: %v", chatID, err)
 		return 0
+	}
+	if msgID != 0 && msgID != sent.MessageID {
+		a.deleteMessage(chatID, msgID)
 	}
 	a.setUI(chatID, sent.MessageID)
 	return sent.MessageID
