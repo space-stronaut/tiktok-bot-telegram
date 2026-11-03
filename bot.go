@@ -459,7 +459,7 @@ func (a *App) showShop(chatID int64, msgID int) int {
 			order = append(order, b)
 		}
 	}
-	sort.Slice(order, func(i, j int) bool { return order[i].start < order[j].start })
+	sort.Slice(order, func(i, j int) bool { return order[i].start > order[j].start })
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, b := range order {
@@ -495,7 +495,7 @@ func (a *App) onAgeGroup(chatID int64, msgID int, ageStart, ageEnd int) {
 		if age < ageStart || age > ageEnd {
 			continue
 		}
-		label := fmt.Sprintf("📅 %s (%d Hari)", formatDateFullID(d.Date), age)
+		label := fmt.Sprintf("📅 %s", formatDateFullID(d.Date))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, "date:"+d.Date.Format("2006-01-02")),
 		))
