@@ -38,22 +38,23 @@ type session struct {
 }
 
 type App struct {
-	cfg      Config
-	store    *Store
-	pay      *PanzzPay
-	api      *tgbotapi.BotAPI
-	loc      *time.Location
-	mu       sync.Mutex
-	sessions map[int64]*session
-	busy     map[int64]bool
-	ui       map[int64]int
-	uiVer    map[int64]int
-	uiOrder  map[int64]string
-	qris     map[string]qrisRef
-	pollers  map[string]bool
-	blocked  map[int64]bool
-	textsMu  sync.RWMutex
-	texts    map[string]string
+	cfg          Config
+	store        *Store
+	pay          *PanzzPay
+	api          *tgbotapi.BotAPI
+	loc          *time.Location
+	mu           sync.Mutex
+	sessions     map[int64]*session
+	busy         map[int64]bool
+	ui           map[int64]int
+	uiVer        map[int64]int
+	uiOrder      map[int64]string
+	qris         map[string]qrisRef
+	pollers      map[string]bool
+	blocked      map[int64]bool
+	lastShopSync time.Time
+	textsMu      sync.RWMutex
+	texts        map[string]string
 }
 
 type qrisRef struct {
@@ -435,8 +436,20 @@ func (a *App) showShop(chatID int64, msgID int) int {
 	defer cancel()
 	a.clearUIOrder(chatID)
 
-	if _, err := a.store.Sync(ctx); err != nil {
-		log.Printf("sync shop: %v", err)
+	// sync S3 itu berat (list ribuan objek, ±7 detik): jangan jalan tiap
+	// tap — cukup sekali per 2 menit; rekonsiliasi rutin tiap 5 menit
+	// sudah menjaga stok tetap segar.
+	a.mu.Lock()
+	last := a.lastShopSync
+	a.mu.Unlock()
+	if time.Since(last) > 2*time.Minute {
+		if _, err := a.store.Sync(ctx); err != nil {
+			log.Printf("sync shop: %v", err)
+		} else {
+			a.mu.Lock()
+			a.lastShopSync = time.Now()
+			a.mu.Unlock()
+		}
 	}
 	dates, err := a.store.Dates(ctx)
 	if err != nil {
