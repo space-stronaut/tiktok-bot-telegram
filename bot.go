@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ type App struct {
 	uiOrder  map[int64]string
 	qris     map[string]qrisRef
 	pollers  map[string]bool
+	blocked  map[int64]bool
 	textsMu  sync.RWMutex
 	texts    map[string]string
 }
@@ -60,7 +62,7 @@ type qrisRef struct {
 }
 
 func newApp(cfg Config, store *Store, pay *PanzzPay, api *tgbotapi.BotAPI, loc *time.Location) *App {
-	return &App{
+	a := &App{
 		cfg:      cfg,
 		store:    store,
 		pay:      pay,
@@ -73,8 +75,72 @@ func newApp(cfg Config, store *Store, pay *PanzzPay, api *tgbotapi.BotAPI, loc *
 		uiOrder:  make(map[int64]string),
 		qris:     make(map[string]qrisRef),
 		pollers:  make(map[string]bool),
+		blocked:  make(map[int64]bool),
 		texts:    make(map[string]string),
 	}
+	a.reloadBlocked()
+	return a
+}
+
+func (a *App) reloadBlocked() {
+	set, err := a.store.BlockedSet(context.Background())
+	if err != nil {
+		log.Printf("muat daftar blokir: %v", err)
+		return
+	}
+	a.mu.Lock()
+	a.blocked = set
+	a.mu.Unlock()
+}
+
+func (a *App) isBlocked(chatID int64) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.blocked[chatID]
+}
+
+// gateBlock menahan user yang diblokir atau saat mode maintenance.
+// Admin selalu lolos.
+func (a *App) gateBlock(chatID int64) bool {
+	if a.isAdmin(chatID) {
+		return false
+	}
+	if a.isBlocked(chatID) {
+		return true
+	}
+	if a.cfg.Maintenance {
+		a.replyText(chatID, "🛠️ <b>Bot sedang pemeliharaan</b>\nCoba lagi beberapa saat. Terima kasih!")
+		return true
+	}
+	return false
+}
+
+func (a *App) isAdmin(chatID int64) bool {
+	for _, id := range a.cfg.AdminIDs {
+		if id == chatID {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) replyText(chatID int64, text string) {
+	if a.api == nil {
+		return
+	}
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = tgbotapi.ModeHTML
+	if _, err := a.api.Send(msg); err != nil {
+		log.Printf("reply %d: %v", chatID, err)
+	}
+}
+
+// priceForDate: harga khusus tanggal bila diatur, jika tidak pakai default.
+func (a *App) priceFor(ctx context.Context, date string) int64 {
+	if p, err := a.store.PriceForDate(ctx, date); err == nil && p > 0 {
+		return p
+	}
+	return a.cfg.PricePerAccount
 }
 
 // reconnectBot mengganti token bot secara live tanpa restart container.
@@ -119,7 +185,11 @@ func (a *App) run() {
 	u.Timeout = 30
 	for update := range a.api.GetUpdatesChan(u) {
 		if update.CallbackQuery != nil {
-			a.handleCallback(update.CallbackQuery)
+			cq := update.CallbackQuery
+			if cq.Message != nil && cq.Message.Chat != nil && a.gateBlock(cq.Message.Chat.ID) {
+				continue
+			}
+			a.handleCallback(cq)
 			continue
 		}
 		msg := update.Message
@@ -127,6 +197,12 @@ func (a *App) run() {
 			continue
 		}
 		chatID := msg.Chat.ID
+		if a.gateBlock(chatID) {
+			if msg.IsCommand() && msg.Command() == "start" {
+				a.replyText(chatID, "🚫 <b>Akses diblokir.</b>\nKamu tidak dapat menggunakan bot ini. Hubungi admin jika merasa ini keliru.")
+			}
+			continue
+		}
 		if msg.IsCommand() {
 			a.deleteMessage(chatID, msg.MessageID)
 			a.clearSession(chatID)
@@ -346,11 +422,23 @@ func (a *App) showShop(chatID int64, msgID int) int {
 		return a.show(chatID, msgID, "📭 Belum ada akun yang tersedia.", &kb)
 	}
 
-	var rows [][]tgbotapi.InlineKeyboardButton
+	// kelompokkan berdasarkan umur akun per 5 hari: 0-5, 6-10, dst.
+	groups := make(map[int]int)
 	for _, d := range dates {
-		label := fmt.Sprintf("📅 %s (%d Hari)", formatDateFullID(d.Date), accountAgeDays(d.Date, a.loc))
+		age := accountAgeDays(d.Date, a.loc)
+		groups[(age/5)*5]++
+	}
+	keys := make([]int, 0, len(groups))
+	for g := range groups {
+		keys = append(keys, g)
+	}
+	sort.Ints(keys)
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, g := range keys {
+		label := fmt.Sprintf("📅 Umur %d–%d Hari (%d tanggal)", g, g+4, groups[g])
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label, "date:"+d.Date.Format("2006-01-02")),
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("age:%d", g)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -360,6 +448,47 @@ func (a *App) showShop(chatID int64, msgID int) int {
 	return a.show(chatID, msgID, a.message("msg_shop", map[string]any{
 		"Price": rupiah(a.cfg.PricePerAccount),
 	}), &kb)
+}
+
+// onAgeGroup menampilkan daftar tanggal dalam kelompok umur terpilih.
+func (a *App) onAgeGroup(chatID int64, msgID int, ageStart int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	a.clearUIOrder(chatID)
+
+	dates, err := a.store.Dates(ctx)
+	if err != nil {
+		a.showError(chatID, msgID, "❌ Gagal membaca stok. Coba lagi nanti.")
+		return
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, d := range dates {
+		age := accountAgeDays(d.Date, a.loc)
+		if age < ageStart || age > ageStart+4 {
+			continue
+		}
+		label := fmt.Sprintf("📅 %s (%d Hari)", formatDateFullID(d.Date), age)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, "date:"+d.Date.Format("2006-01-02")),
+		))
+	}
+	if len(rows) == 0 {
+		kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali", "shop"),
+			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
+		))
+		a.show(chatID, msgID, "📭 Tidak ada stok untuk umur itu.", &kb)
+		return
+	}
+	rows = append(rows,
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali", "shop"),
+			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
+		),
+	)
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	text := fmt.Sprintf("📅 <b>Akun umur %d–%d hari</b>\n\nPilih tanggal akun:", ageStart, ageStart+4)
+	a.show(chatID, msgID, text, &kb)
 }
 
 func (a *App) onDate(chatID int64, msgID int, date string) {
@@ -418,7 +547,7 @@ func (a *App) onDate(chatID int64, msgID int, date string) {
 	text := a.message("msg_date", map[string]any{
 		"Date":  formatDateString(date, a.loc),
 		"Stock": count,
-		"Price": rupiah(a.cfg.PricePerAccount),
+		"Price": rupiah(a.priceFor(ctx, date)),
 	})
 	a.show(chatID, msgID, text, &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows})
 }
@@ -509,13 +638,14 @@ func (a *App) handleText(msg *tgbotapi.Message) {
 
 func (a *App) showConfirmation(chatID int64, msgID int, date string, qty int) int {
 	a.clearUIOrder(chatID)
-	total := int64(qty) * a.cfg.PricePerAccount
+	price := a.priceFor(context.Background(), date)
+	total := int64(qty) * price
 	fee := feeEstimate(total)
 	token := newToken()
 	text := a.message("msg_confirm", map[string]any{
 		"Date":       formatDateString(date, a.loc),
 		"Qty":        qty,
-		"Price":      rupiah(a.cfg.PricePerAccount),
+		"Price":      rupiah(price),
 		"Total":      rupiah(total),
 		"Fee":        rupiah(fee),
 		"GrandTotal": rupiah(total + fee),
@@ -549,9 +679,19 @@ func (a *App) handleCallback(cq *tgbotapi.CallbackQuery) {
 	switch {
 	case data == "home":
 		a.clearSession(chatID)
-		a.showHome(chatID, msgID)
+		// hapus pesan layar sebelumnya supaya chat bersih
+		if msgID != 0 {
+			a.deleteMessage(chatID, msgID)
+		}
+		a.showHome(chatID, 0)
 	case data == "shop":
 		a.showShop(chatID, msgID)
+	case strings.HasPrefix(data, "age:"):
+		g, err := strconv.Atoi(strings.TrimPrefix(data, "age:"))
+		if err != nil || g < 0 {
+			return
+		}
+		a.onAgeGroup(chatID, msgID, g)
 	case data == "help":
 		a.showHelp(chatID, msgID)
 	case data == "myorders":
@@ -666,8 +806,9 @@ func (a *App) process(chatID int64, msgID int, username, date string, qty int, t
 
 	orderID := fmt.Sprintf("ORD-%s-%d-%s", time.Now().Format("20060102-150405"), chatID, token[:4])
 	idemKey := fmt.Sprintf("%d:%s", chatID, token)
+	price := a.priceFor(ctx, date)
 
-	_, _, duplicate, err := a.store.Reserve(ctx, orderID, idemKey, chatID, username, date, qty, a.cfg.MaxZipBytes, a.cfg.PricePerAccount)
+	_, _, duplicate, err := a.store.Reserve(ctx, orderID, idemKey, chatID, username, date, qty, a.cfg.MaxZipBytes, price)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInsufficient):

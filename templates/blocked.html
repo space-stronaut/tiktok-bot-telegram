@@ -1,0 +1,60 @@
+{{define "content"}}
+<div class="mb-3">
+  <h1 class="h3 mb-1">Blokir Pengguna</h1>
+  <p class="text-secondary mb-0 small">Pengguna yang diblokir tidak bisa memakai bot sama sekali (semua tombol & perintah diabaikan).</p>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-white fw-semibold"><i class="bi bi-slash-circle me-1"></i>Blokir pengguna</div>
+  <div class="card-body">
+    <form method="post" action="/blocked" class="row g-2 align-items-end">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <div class="col-md-4">
+        <label class="form-label small fw-semibold" for="chat_id">Chat ID Telegram</label>
+        <input class="form-control mono" id="chat_id" name="chat_id" type="text" placeholder="contoh: 5522801525" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small fw-semibold" for="username">Username (opsional)</label>
+        <input class="form-control" id="username" name="username" type="text" placeholder="contoh: wakbero">
+      </div>
+      <div class="col-md-4">
+        <button class="btn btn-danger w-100" type="submit"><i class="bi bi-slash-circle me-1"></i>Blokir</button>
+      </div>
+    </form>
+    <div class="form-text">Chat ID bisa dilihat di halaman Pesanan (kolom Chat) — pembeli ketik /id di bot untuk mengetahui ID-nya sendiri.</div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white fw-semibold"><i class="bi bi-list-ul me-1"></i>Daftar yang diblokir ({{len .Blocked}})</div>
+  <div class="card-body p-0">
+    {{if .Blocked}}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>Chat ID</th><th>Username</th><th>Diblokir</th><th class="text-end">Aksi</th></tr>
+        </thead>
+        <tbody>
+          {{range .Blocked}}
+          <tr>
+            <td class="mono">{{.ChatID}}</td>
+            <td>{{if .Username}}@{{.Username}}{{else}}-{{end}}</td>
+            <td class="small text-secondary">{{datetime .BlockedAt}}</td>
+            <td class="text-end">
+              <form method="post" action="/blocked/delete" class="d-inline" data-confirm="Buka blokir untuk pengguna ini?">
+                <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="chat_id" value="{{.ChatID}}">
+                <button class="btn btn-outline-success btn-sm" type="submit"><i class="bi bi-unlock me-1"></i>Buka blokir</button>
+              </form>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="p-3 text-secondary">Belum ada pengguna yang diblokir.</div>
+    {{end}}
+  </div>
+</div>
+{{end}}

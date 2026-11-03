@@ -10,6 +10,17 @@
       <i class="bi bi-exclamation-triangle me-1"></i>Review: {{.Stats.Review}}
     </a>
     <a href="/orders" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul me-1"></i>Semua Pesanan</a>
+    <form method="post" action="/maintenance" class="m-0" data-confirm="{{if .Maintenance}}Matikan mode maintenance dan layani semua pengguna?{{else}}Aktifkan mode maintenance? Selain admin tidak bisa memakai bot.{{end}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      {{if .Maintenance}}
+      <input type="hidden" name="mode" value="off">
+      <button class="btn btn-warning btn-sm" type="submit"><i class="bi bi-play-circle me-1"></i>Akhiri Maintenance</button>
+      {{else}}
+      <input type="hidden" name="mode" value="on">
+      <button class="btn btn-outline-warning btn-sm" type="submit"><i class="bi bi-pause-circle me-1"></i>Maintenance</button>
+      {{end}}
+    </form>
+
   </div>
 </div>
 

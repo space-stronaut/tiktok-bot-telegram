@@ -19,6 +19,7 @@ const settingsKeyMaxAccounts = "max_accounts_per_order"
 const settingsKeyMaxZipBytes = "max_zip_bytes"
 const settingsKeyHomeBanner = "home_banner_url"
 const settingsKeyAdminContact = "admin_contact_url"
+const settingsKeyMaintenance = "maintenance"
 
 var adminMigrations = []string{
 	`CREATE TABLE IF NOT EXISTS settings (
@@ -395,6 +396,9 @@ func applySettings(cfg *Config, m map[string]string) {
 	}
 	if v, ok := m[settingsKeyAdminContact]; ok {
 		cfg.AdminContactURL = strings.TrimSpace(v)
+	}
+	if v, ok := m[settingsKeyMaintenance]; ok {
+		cfg.Maintenance = strings.TrimSpace(v) == "1"
 	}
 }
 

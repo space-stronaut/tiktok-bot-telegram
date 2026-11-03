@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -73,6 +74,10 @@ type pageData struct {
 	NextURL       string
 	DefaultPrice  int64
 	MaxAccounts   int
+	Blocked       []BlockedUser
+	Prices        []DatePriceRow
+	Maintenance   bool
+	ShowAll       bool
 }
 
 type settingsView struct {
@@ -135,6 +140,19 @@ func NewAdminServer(app *App) (*AdminServer, error) {
 		"rupiah": rupiah,
 		"date": func(t time.Time) string {
 			return formatDateID(t.In(loc))
+		},
+		"formatDate": func(s string) string {
+			t, err := time.ParseInLocation("2006-01-02", s, loc)
+			if err != nil {
+				return s
+			}
+			return formatDateID(t)
+		},
+		"ternary": func(a any, b any, cond bool) any {
+			if cond {
+				return a
+			}
+			return b
 		},
 		"datetime": func(t time.Time) string {
 			return t.In(loc).Format("02 Jan 2006 15:04")
@@ -216,7 +234,7 @@ func NewAdminServer(app *App) (*AdminServer, error) {
 	}
 
 	pages := make(map[string]*template.Template)
-	for _, name := range []string{"dashboard", "orders", "order", "stock", "settings", "texts", "password", "neworder"} {
+	for _, name := range []string{"dashboard", "orders", "order", "stock", "settings", "texts", "password", "neworder", "blocked", "prices", "broadcast"} {
 		t, err := template.New("layout").Funcs(funcs).ParseFS(adminAssets, "templates/layout.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("template %s: %w", name, err)
@@ -327,6 +345,14 @@ func (s *AdminServer) routes() http.Handler {
 	mux.HandleFunc("POST /settings", s.withAuthPost(s.handleSettingsPost))
 	mux.HandleFunc("GET /texts", s.withAuth(s.handleTextsGet))
 	mux.HandleFunc("POST /texts", s.withAuthPost(s.handleTextsPost))
+	mux.HandleFunc("GET /blocked", s.withAuth(s.handleBlockedGet))
+	mux.HandleFunc("POST /blocked", s.withAuthPost(s.handleBlockedPost))
+	mux.HandleFunc("POST /blocked/delete", s.withAuthPost(s.handleBlockedDelete))
+	mux.HandleFunc("GET /prices", s.withAuth(s.handlePricesGet))
+	mux.HandleFunc("POST /prices", s.withAuthPost(s.handlePricesPost))
+	mux.HandleFunc("GET /broadcast", s.withAuth(s.handleBroadcastGet))
+	mux.HandleFunc("POST /broadcast", s.withAuthPost(s.handleBroadcastPost))
+	mux.HandleFunc("POST /maintenance", s.withAuthPost(s.handleMaintenancePost))
 	mux.HandleFunc("GET /password", s.withAuth(s.handlePasswordGet))
 	mux.HandleFunc("POST /password", s.withAuthPost(s.handlePasswordPost))
 	return securityHeaders(mux)
@@ -477,11 +503,12 @@ func (s *AdminServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, "dashboard", &pageData{
-		Title:  "Dashboard",
-		Active: "dashboard",
-		Stats:  stats,
-		Orders: orders,
-		Stock:  stock,
+		Title:       "Dashboard",
+		Active:      "dashboard",
+		Stats:       stats,
+		Orders:      orders,
+		Stock:       stock,
+		Maintenance: s.app.cfg.Maintenance,
 	})
 }
 
@@ -780,20 +807,31 @@ func (s *AdminServer) handleOrderCancel(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *AdminServer) handleStock(w http.ResponseWriter, r *http.Request) {
+	showAll := r.URL.Query().Get("showall") == "1"
 	stock, err := s.store.AdminStock(r.Context())
 	if err != nil {
 		s.renderError(w, r, "Gagal memuat stok: "+err.Error())
 		return
+	}
+	if !showAll {
+		filtered := stock[:0]
+		for _, row := range stock {
+			if row.Available > 0 {
+				filtered = append(filtered, row)
+			}
+		}
+		stock = filtered
 	}
 	stats, err := s.store.AdminStats(r.Context())
 	if err != nil {
 		stats = &AdminStats{}
 	}
 	s.render(w, r, "stock", &pageData{
-		Title:  "Stok Akun",
-		Active: "stock",
-		Stock:  stock,
-		Stats:  stats,
+		Title:   "Stok Akun",
+		Active:  "stock",
+		ShowAll: showAll,
+		Stock:   stock,
+		Stats:   stats,
 	})
 }
 
@@ -1132,6 +1170,183 @@ func (s *AdminServer) botName() string {
 		return s.app.api.Self.UserName
 	}
 	return "-"
+}
+
+func (s *AdminServer) handleBlockedGet(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.BlockedUsers(r.Context())
+	if err != nil {
+		s.renderError(w, r, "Gagal memuat daftar blokir: "+err.Error())
+		return
+	}
+	s.render(w, r, "blocked", &pageData{
+		Title:   "Blokir Pengguna",
+		Active:  "blocked",
+		Blocked: list,
+	})
+}
+
+func (s *AdminServer) handleBlockedPost(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("chat_id")), 10, 64)
+	if err != nil || chatID <= 0 {
+		redirectFlash(w, r, "/blocked", "err", "Chat ID tidak valid.")
+		return
+	}
+	username := strings.TrimSpace(strings.TrimPrefix(r.PostFormValue("username"), "@"))
+	if err := s.store.BlockUser(r.Context(), chatID, username); err != nil {
+		redirectFlash(w, r, "/blocked", "err", "Gagal memblokir: "+err.Error())
+		return
+	}
+	s.app.reloadBlocked()
+	redirectFlash(w, r, "/blocked", "ok", fmt.Sprintf("Pengguna %d diblokir dan tidak bisa memakai bot.", chatID))
+}
+
+func (s *AdminServer) handleBlockedDelete(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("chat_id")), 10, 64)
+	if err != nil || chatID <= 0 {
+		redirectFlash(w, r, "/blocked", "err", "Chat ID tidak valid.")
+		return
+	}
+	if err := s.store.UnblockUser(r.Context(), chatID); err != nil {
+		redirectFlash(w, r, "/blocked", "err", "Gagal membuka blokir: "+err.Error())
+		return
+	}
+	s.app.reloadBlocked()
+	redirectFlash(w, r, "/blocked", "ok", fmt.Sprintf("Blokir untuk %d dibuka.", chatID))
+}
+
+func (s *AdminServer) handlePricesGet(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.store.DatePriceRows(r.Context())
+	if err != nil {
+		s.renderError(w, r, "Gagal memuat harga: "+err.Error())
+		return
+	}
+	s.render(w, r, "prices", &pageData{
+		Title:        "Harga per Tanggal",
+		Active:       "prices",
+		Prices:       rows,
+		DefaultPrice: s.app.cfg.PricePerAccount,
+	})
+}
+
+func (s *AdminServer) handlePricesPost(w http.ResponseWriter, r *http.Request) {
+	saved := 0
+	for key, vals := range r.PostForm {
+		if !strings.HasPrefix(key, "price_") || len(vals) == 0 {
+			continue
+		}
+		date := strings.TrimPrefix(key, "price_")
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			continue
+		}
+		v := strings.TrimSpace(vals[0])
+		if v == "" {
+			if err := s.store.SetDatePrice(r.Context(), date, 0); err != nil {
+				redirectFlash(w, r, "/prices", "err", "Gagal hapus harga "+date+": "+err.Error())
+				return
+			}
+			saved++
+			continue
+		}
+		price, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || price < 0 {
+			redirectFlash(w, r, "/prices", "err", "Harga "+date+" tidak valid.")
+			return
+		}
+		if err := s.store.SetDatePrice(r.Context(), date, price); err != nil {
+			redirectFlash(w, r, "/prices", "err", "Gagal simpan harga "+date+": "+err.Error())
+			return
+		}
+		saved++
+	}
+	redirectFlash(w, r, "/prices", "ok", fmt.Sprintf("%d tanggal disimpan. Kosong = pakai harga default.", saved))
+}
+
+func (s *AdminServer) handleBroadcastGet(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "broadcast", &pageData{Title: "Broadcast", Active: "broadcast"})
+}
+
+func (s *AdminServer) handleBroadcastPost(w http.ResponseWriter, r *http.Request) {
+	text := strings.TrimSpace(r.PostFormValue("text"))
+	if text == "" {
+		redirectFlash(w, r, "/broadcast", "err", "Pesan tidak boleh kosong.")
+		return
+	}
+	if len(text) > 3500 {
+		redirectFlash(w, r, "/broadcast", "err", "Pesan maksimal 3500 karakter.")
+		return
+	}
+	var targets []int64
+	switch strings.TrimSpace(r.PostFormValue("target")) {
+	case "user":
+		chatID, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("chat_id")), 10, 64)
+		if err != nil || chatID <= 0 {
+			redirectFlash(w, r, "/broadcast", "err", "Chat ID tidak valid.")
+			return
+		}
+		if s.app.isBlocked(chatID) {
+			redirectFlash(w, r, "/broadcast", "err", "Pengguna itu sedang diblokir.")
+			return
+		}
+		targets = []int64{chatID}
+	default:
+		all, err := s.store.BroadcastTargets(r.Context())
+		if err != nil {
+			redirectFlash(w, r, "/broadcast", "err", "Gagal mengumpulkan penerima: "+err.Error())
+			return
+		}
+		targets = all
+	}
+	if len(targets) == 0 {
+		redirectFlash(w, r, "/broadcast", "err", "Tidak ada penerima.")
+		return
+	}
+	go s.app.sendBroadcast(targets, text)
+	redirectFlash(w, r, "/broadcast", "ok", fmt.Sprintf("Broadcast ke %d pengguna dimulai; laporan dikirim ke admin setelah selesai.", len(targets)))
+}
+
+func (a *App) sendBroadcast(targets []int64, text string) {
+	sent, failed := 0, 0
+	for _, id := range targets {
+		if a.isBlocked(id) {
+			continue
+		}
+		msg := tgbotapi.NewMessage(id, text)
+		msg.ParseMode = tgbotapi.ModeHTML
+		if _, err := a.api.Send(msg); err != nil {
+			// fallback: kirim tanpa format HTML bila parse gagal
+			if strings.Contains(err.Error(), "can't parse entities") {
+				msg.ParseMode = ""
+				if _, err2 := a.api.Send(msg); err2 == nil {
+					sent++
+					continue
+				}
+			}
+			failed++
+		} else {
+			sent++
+		}
+		time.Sleep(60 * time.Millisecond)
+	}
+	log.Printf("broadcast: %d terkirim, %d gagal", sent, failed)
+	a.notifyAdmins(fmt.Sprintf("📢 <b>Broadcast selesai</b>\nTerkirim: %d\nGagal: %d", sent, failed))
+}
+
+func (s *AdminServer) handleMaintenancePost(w http.ResponseWriter, r *http.Request) {
+	enable := strings.TrimSpace(r.PostFormValue("mode")) == "on"
+	value := "0"
+	if enable {
+		value = "1"
+	}
+	if err := s.store.SetSettings(r.Context(), map[string]string{settingsKeyMaintenance: value}); err != nil {
+		redirectFlash(w, r, "/", "err", "Gagal simpan mode maintenance: "+err.Error())
+		return
+	}
+	applySettings(&s.app.cfg, map[string]string{settingsKeyMaintenance: value})
+	msg := "Bot kembali normal — semua pengguna dilayani."
+	if enable {
+		msg = "Mode maintenance AKTIF — hanya admin yang dilayani bot."
+	}
+	redirectFlash(w, r, "/", "ok", msg)
 }
 
 func (s *AdminServer) render(w http.ResponseWriter, r *http.Request, name string, data *pageData) {

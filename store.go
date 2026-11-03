@@ -78,6 +78,16 @@ var orderMigrations = []string{
 	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	KEY idx_next_attempt (next_attempt_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS blocked_users (
+	chat_id BIGINT PRIMARY KEY,
+	username VARCHAR(255) NOT NULL DEFAULT '',
+	blocked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS date_prices (
+	account_date DATE PRIMARY KEY,
+	price BIGINT NOT NULL,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_per_account BIGINT NOT NULL DEFAULT 0`,
 	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_price BIGINT NOT NULL DEFAULT 0`,
 	`ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at DATETIME NULL`,
@@ -743,6 +753,127 @@ type StaleQRIS struct {
 	OrderID string
 	ChatID  int64
 	MsgID   int
+}
+
+type BlockedUser struct {
+	ChatID    int64
+	Username  string
+	BlockedAt time.Time
+}
+
+type DatePriceRow struct {
+	Date      string
+	Price     int64
+	Custom    bool
+	Available int64
+}
+
+func (s *Store) BlockedUsers(ctx context.Context) ([]BlockedUser, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT chat_id, username, blocked_at FROM blocked_users ORDER BY blocked_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BlockedUser
+	for rows.Next() {
+		var b BlockedUser
+		if err := rows.Scan(&b.ChatID, &b.Username, &b.BlockedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) BlockedSet(ctx context.Context) (map[int64]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT chat_id FROM blocked_users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) BlockUser(ctx context.Context, chatID int64, username string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO blocked_users (chat_id, username) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE username = VALUES(username)`, chatID, username)
+	return err
+}
+
+func (s *Store) UnblockUser(ctx context.Context, chatID int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM blocked_users WHERE chat_id = ?`, chatID)
+	return err
+}
+
+// PriceForDate mengembalikan harga khusus untuk tanggal, atau
+// sql.ErrNoRows kalau tidak ada (pakai harga default).
+func (s *Store) PriceForDate(ctx context.Context, date string) (int64, error) {
+	var price int64
+	err := s.db.QueryRowContext(ctx, `SELECT price FROM date_prices WHERE account_date = ?`, date).Scan(&price)
+	return price, err
+}
+
+// DatePriceRows menggabungkan tanggal stok dengan harga kustom.
+func (s *Store) DatePriceRows(ctx context.Context) ([]DatePriceRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT d.account_date, COALESCE(p.price, 0), (p.price IS NOT NULL),
+		(SELECT COUNT(*) FROM accounts a WHERE a.account_date = d.account_date AND a.status = 'available')
+	FROM (SELECT DISTINCT account_date FROM accounts
+		UNION SELECT account_date FROM date_prices) d
+	LEFT JOIN date_prices p ON p.account_date = d.account_date
+	ORDER BY d.account_date DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DatePriceRow
+	for rows.Next() {
+		var r DatePriceRow
+		var date time.Time
+		if err := rows.Scan(&date, &r.Price, &r.Custom, &r.Available); err != nil {
+			return nil, err
+		}
+		r.Date = date.Format("2006-01-02")
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetDatePrice(ctx context.Context, date string, price int64) error {
+	if price <= 0 {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM date_prices WHERE account_date = ?`, date)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO date_prices (account_date, price) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE price = VALUES(price)`, date, price)
+	return err
+}
+
+// BroadcastTargets mengembalikan semua chat yang pernah berinteraksi
+// (pernah membuat order), tanpa yang diblokir.
+func (s *Store) BroadcastTargets(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT o.chat_id FROM orders o
+		WHERE o.chat_id > 0 AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE b.chat_id = o.chat_id)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // StuckDeliveries mengembalikan order lunas yang belum terkirim maupun

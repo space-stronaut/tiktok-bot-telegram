@@ -1,0 +1,49 @@
+{{define "content"}}
+<div class="mb-3">
+  <h1 class="h3 mb-1">Harga per Tanggal</h1>
+  <p class="text-secondary mb-0 small">Harga default: <b>{{rupiah .DefaultPrice}}</b>/akun. Isi kolom untuk mengubah harga tanggal tertentu; kosongkan untuk pakai harga default.</p>
+</div>
+
+<form method="post" action="/prices">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="card shadow-sm">
+    <div class="card-body p-0">
+      {{if .Prices}}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr><th>Tanggal Akun</th><th>Stok Tersedia</th><th>Harga Saat Ini</th><th style="width:220px">Harga Baru (Rp)</th></tr>
+          </thead>
+          <tbody>
+            {{range .Prices}}
+            <tr>
+              <td>{{formatDate .Date}}</td>
+              <td>{{if gt .Available 0}}<span class="badge text-bg-success">{{.Available}} akun</span>{{else}}<span class="badge text-bg-secondary">habis</span>{{end}}</td>
+              <td>
+                {{if .Custom}}<span class="badge text-bg-warning me-1">custom</span>{{end}}
+                <b>{{rupiah (ternary .Price .DefaultPrice .Custom)}}</b>
+              </td>
+              <td>
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text">Rp</span>
+                  <input class="form-control mono" type="number" min="0" step="1000"
+                         name="price_{{.Date}}" value="{{if .Custom}}{{.Price}}{{end}}" placeholder="default">
+                </div>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div class="p-3 text-secondary">Belum ada tanggal stok.</div>
+      {{end}}
+    </div>
+    {{if .Prices}}
+    <div class="card-footer bg-white">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Simpan semua harga</button>
+    </div>
+    {{end}}
+  </div>
+</form>
+{{end}}

@@ -33,6 +33,7 @@ type Config struct {
 	PanzzAPIKey       string
 	PaymentWebhookURL string
 	AdminContactURL   string
+	Maintenance       bool
 	TZ                string
 	AdminAddr         string
 	HomeBannerURL     string
@@ -66,6 +67,7 @@ func loadConfig() Config {
 		PanzzAPIKey:       getenv("PANZZ_API_KEY", ""),
 		PaymentWebhookURL: getenv("PAYMENT_WEBHOOK_URL", "https://tiktokbotmanager.naldstronaut.my.id/webhook/payment"),
 		AdminContactURL:   getenv("ADMIN_CONTACT_URL", ""),
+		Maintenance:       getenv("MAINTENANCE", "0") == "1",
 		TZ:                getenv("TZ", "Asia/Jakarta"),
 		AdminAddr:         getenv("ADMIN_ADDR", ":8091"),
 		HomeBannerURL:     getenv("HOME_BANNER_URL", ""),
