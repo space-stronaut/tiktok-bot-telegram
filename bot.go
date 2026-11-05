@@ -555,6 +555,12 @@ func (a *App) onDate(chatID int64, msgID int, date string) {
 		max = a.cfg.MaxAccounts
 	}
 
+	// tombol kembali ke daftar tanggal dalam kelompok umur yang sama
+	b := ageBucket(accountAgeDays(mustParseDate(date, a.loc), a.loc))
+	backRow := tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali", fmt.Sprintf("age:%d:%d", b.start, b.end)),
+	)
+
 	presets := []int{10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
 	var rows [][]tgbotapi.InlineKeyboardButton
 	if count > 10 {
@@ -578,6 +584,7 @@ func (a *App) onDate(chatID int64, msgID int, date string) {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✏️ Custom jumlah", "custom:"+date),
 		),
+		backRow,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
 		),
@@ -589,6 +596,16 @@ func (a *App) onDate(chatID int64, msgID int, date string) {
 		"Price": rupiah(a.priceFor(ctx, date)),
 	})
 	a.show(chatID, msgID, text, &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows})
+}
+
+// mustParseDate mengubah "2006-01-02" ke time.Time; gagal parse
+// mengembalikan waktu nol (umur dihitung 0).
+func mustParseDate(date string, loc *time.Location) time.Time {
+	t, err := time.ParseInLocation("2006-01-02", date, loc)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func (a *App) onCustom(chatID int64, msgID int, date, notice string) {
@@ -623,8 +640,10 @@ func (a *App) onCustom(chatID int64, msgID int, date, notice string) {
 	if notice != "" {
 		text += "\n" + notice
 	}
+	b := ageBucket(accountAgeDays(mustParseDate(date, a.loc), a.loc))
 	kb := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "home"),
+		tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali", fmt.Sprintf("age:%d:%d", b.start, b.end)),
+		tgbotapi.NewInlineKeyboardButtonData("🏠 Home", "home"),
 	))
 	a.show(chatID, msgID, text, &kb)
 }
