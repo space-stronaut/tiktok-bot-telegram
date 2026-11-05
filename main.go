@@ -12,6 +12,9 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// version diisi saat build: --build-arg VERSION=<git short sha>
+var version = "dev"
+
 type Config struct {
 	BotToken          string
 	AdminIDs          []int64
@@ -115,6 +118,7 @@ func loadConfig() Config {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
+	log.Printf("versi %s", version)
 	cfg := loadConfig()
 
 	loc, err := time.LoadLocation(cfg.TZ)

@@ -74,6 +74,7 @@ type pageData struct {
 	NextURL       string
 	DefaultPrice  int64
 	MaxAccounts   int
+	Version       string
 	Blocked       []BlockedUser
 	Prices        []DatePriceRow
 	Maintenance   bool
@@ -324,7 +325,7 @@ func (s *AdminServer) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
+		fmt.Fprintf(w, "ok %s", version)
 	})
 	mux.HandleFunc("GET /static/app.js", s.handleAppJS)
 	mux.HandleFunc("GET /login", s.handleLoginGet)
@@ -1376,6 +1377,7 @@ func (s *AdminServer) render(w http.ResponseWriter, r *http.Request, name string
 		data.CSRF = sess.CSRF
 	}
 	data.BotName = s.botName()
+	data.Version = version
 	data.Flash, data.FlashKind = flashFrom(r)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -34,6 +34,7 @@
       </ul>
       <div class="d-flex align-items-center gap-3">
         <span class="navbar-text small"><i class="bi bi-telegram me-1"></i>@{{.BotName}}</span>
+        <span class="navbar-text small text-secondary" title="Versi aplikasi">v{{.Version}}</span>
         <a class="nav-link small {{if eq .Active "password"}}active{{end}}" href="/password"><i class="bi bi-person-gear me-1"></i>{{.User}}</a>
         <form method="post" action="/logout" class="m-0">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
